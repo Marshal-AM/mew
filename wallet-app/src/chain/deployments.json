@@ -1,0 +1,6 @@
+{
+  "network": "amoy",
+  "chainId": 80002,
+  "paymentForwarder": "0x9F0BF4aE6BBfD51eDbff77eA0D17A7bec484bb97",
+  "testToken": "0x26D215752f68bc2254186F9f6FF068b8C4BdFd37"
+}

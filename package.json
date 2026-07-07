@@ -1,0 +1,30 @@
+{
+  "name": "moo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline BLE → Polygon POS payment system",
+  "workspaces": [
+    "contracts",
+    "wallet-app",
+    "backend",
+    "dashboard"
+  ],
+  "scripts": {
+    "test": "npm run test --workspace=contracts",
+    "compile": "npm run compile --workspace=contracts",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "overrides": {
+    "wallet-app": {
+      "react": "18.3.1"
+    }
+  },
+  "devDependencies": {
+    "babel-plugin-module-resolver": "^5.0.3",
+    "babel-plugin-syntax-hermes-parser": "^0.36.1",
+    "hermes-parser": "^0.36.0"
+  }
+}

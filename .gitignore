@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Hardhat
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+contracts/coverage/
+contracts/coverage.json
+
+# Next.js
+dashboard/.next/
+dashboard/out/
+
+# Expo
+wallet-app/.expo/
+wallet-app/dist/
+wallet-app/web-build/
+wallet-app/logs/
+
+# Android native build outputs (wallet-app/android/.gitignore covers most)
+wallet-app/android/.gradle/
+wallet-app/android/app/build/
+
+# PlatformIO
+pos-firmware/.pio/
+
+# Supabase
+backend/.branches/
+backend/.temp/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+
+# TypeScript
+*.tsbuildinfo

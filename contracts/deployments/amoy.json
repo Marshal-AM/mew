@@ -1,0 +1,11 @@
+{
+  "network": "amoy",
+  "chainId": 80002,
+  "paymentForwarder": "0x9F0BF4aE6BBfD51eDbff77eA0D17A7bec484bb97",
+  "testToken": "0x26D215752f68bc2254186F9f6FF068b8C4BdFd37",
+  "deployer": "0x2514844F312c02Ae3C9d4fEb40db4eC8830b6844",
+  "deployedAt": "2026-07-07T05:55:00.000Z",
+  "note": "paymentForwarder is the new universal forwarder; testToken is the legacy PayToken (plain ERC-20, use with forwarder after approve)",
+  "forwarderExplorerUrl": "https://amoy.polygonscan.com/address/0x9F0BF4aE6BBfD51eDbff77eA0D17A7bec484bb97",
+  "testTokenExplorerUrl": "https://amoy.polygonscan.com/address/0x26D215752f68bc2254186F9f6FF068b8C4BdFd37"
+}

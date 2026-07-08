@@ -1,0 +1,10 @@
+[
+  {
+    "entity_name": "SANCTIONED TEST ENTITY",
+    "aliases": ["Test Bad Actor"]
+  },
+  {
+    "entity_name": "GLOBAL ARMS TRADER LLC",
+    "aliases": ["Arms Trader Global"]
+  }
+]

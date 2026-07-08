@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -36,6 +36,9 @@ jobs:
           cache: npm
       - run: npm ci
         working-directory: .
+      - run: npm run test:protocol
+      - run: npm run test:signing
+      - run: npm run test:auth-gate
       - run: npm run typecheck
 
   dashboard:
@@ -68,6 +71,11 @@ jobs:
       - run: npm ci
         working-directory: .
       - run: npm run lint
+      - run: npm run test:sql
+      - run: npm run test:rls
+      - run: npm run test:pipeline
+      - run: npm run test:screening
+      - run: npm run test:fraud
 
   pos-firmware:
     runs-on: ubuntu-latest
@@ -81,4 +89,5 @@ jobs:
           python-version: "3.11"
       - name: Install PlatformIO
         run: pip install platformio
-      - run: pio run
+      - run: pio run -e esp32-oled -e esp32-tft
+

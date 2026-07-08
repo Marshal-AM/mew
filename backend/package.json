@@ -3,9 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "lint": "node scripts/check.js"
+    "lint": "node scripts/check.js",
+    "test:rls": "node scripts/test-rls.mjs",
+    "test:sql": "node scripts/validate-sql.mjs",
+    "test:pipeline": "node scripts/test-pipeline.mjs",
+    "test:screening": "node scripts/test-screening.mjs",
+    "test:fraud": "node scripts/test-fraud.mjs",
+    "db:reset": "supabase db reset"
   },
   "devDependencies": {
+    "ethers": "^6.13.0",
     "supabase": "^2.0.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1"
   }
 }

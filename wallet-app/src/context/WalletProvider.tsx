@@ -13,9 +13,21 @@ import * as secureStorage from "../wallet/secureStorage";
 import {
   getWalletFromMnemonic,
   signMessage,
+  signTransferWithAuthorization,
   SIGN_TEST_MESSAGE,
   verifySignature,
 } from "../wallet/walletService";
+import { consumeSigningSession } from "../wallet/authGate";
+import { buildTransferMessage, getForwarderDomain } from "../wallet/eip712";
+import type { PaymentRequest } from "../protocol/paymentRequest";
+import {
+  buildSignedPaymentPayload,
+  type SignedPaymentPayload,
+} from "../protocol/signedPayment";
+import { syncPosRegistryFromServer } from "../cache/posRegistry";
+import { syncTransactionsForWallet } from "../cache/transactionSync";
+import * as Network from "expo-network";
+import { isSupabaseConfigured } from "../lib/supabase";
 
 type WalletState = "loading" | "unlocked" | "none";
 
@@ -30,6 +42,15 @@ type WalletContextValue = {
   unlockFromMnemonic: (mnemonic: string) => void;
   logout: () => Promise<void>;
   signTestMessage: () => Promise<{ signature: string; valid: boolean }>;
+  signPaymentAuthorization: (params: {
+    sessionId: string;
+    request: PaymentRequest;
+    payoutAddress: string;
+  }) => Promise<SignedPaymentPayload>;
+  syncPosRegistry: () => Promise<void>;
+  syncTransactions: () => Promise<number>;
+  posRegistrySyncError: string | null;
+  transactionSyncError: string | null;
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -41,6 +62,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [balancesLoading, setBalancesLoading] = useState(false);
   const [balancesError, setBalancesError] = useState<string | null>(null);
+  const [posRegistrySyncError, setPosRegistrySyncError] = useState<string | null>(null);
+  const [transactionSyncError, setTransactionSyncError] = useState<string | null>(null);
 
   const address = wallet?.address ?? null;
 
@@ -90,6 +113,68 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return { signature, valid };
   }, [wallet]);
 
+  const syncPosRegistry = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setPosRegistrySyncError(null);
+      return;
+    }
+    const net = await Network.getNetworkStateAsync();
+    if (!net.isConnected) {
+      setPosRegistrySyncError("Offline — using cached POS registry.");
+      return;
+    }
+    try {
+      await syncPosRegistryFromServer();
+      setPosRegistrySyncError(null);
+    } catch (err) {
+      setPosRegistrySyncError(err instanceof Error ? err.message : "POS registry sync failed");
+    }
+  }, []);
+
+  const syncTransactions = useCallback(async () => {
+    if (!wallet || !isSupabaseConfigured()) {
+      setTransactionSyncError(null);
+      return 0;
+    }
+    const net = await Network.getNetworkStateAsync();
+    if (!net.isConnected) {
+      setTransactionSyncError("Offline — transaction status may be stale.");
+      return 0;
+    }
+    try {
+      const count = await syncTransactionsForWallet(wallet.address);
+      setTransactionSyncError(null);
+      return count;
+    } catch (err) {
+      setTransactionSyncError(err instanceof Error ? err.message : "Transaction sync failed");
+      return 0;
+    }
+  }, [wallet]);
+
+  const signPaymentAuthorization = useCallback(
+    async (params: {
+      sessionId: string;
+      request: PaymentRequest;
+      payoutAddress: string;
+    }) => {
+      if (!wallet) {
+        throw new Error("Wallet not unlocked");
+      }
+
+      consumeSigningSession(params.sessionId);
+
+      const message = await buildTransferMessage(
+        wallet.address,
+        params.payoutAddress,
+        params.request
+      );
+      const domain = getForwarderDomain();
+      const signature = await signTransferWithAuthorization(wallet, domain, message);
+      return buildSignedPaymentPayload(params.request, message, signature);
+    },
+    [wallet]
+  );
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -127,8 +212,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (state === "unlocked" && wallet) {
       console.log(`[MooWallet] refresh balances for ${wallet.address}`);
       refreshBalances();
+      void syncPosRegistry();
+      void syncTransactions();
     }
-  }, [state, wallet, refreshBalances]);
+  }, [state, wallet, refreshBalances, syncPosRegistry, syncTransactions]);
 
   const value = useMemo(
     () => ({
@@ -142,6 +229,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       unlockFromMnemonic,
       logout,
       signTestMessage,
+      signPaymentAuthorization,
+      syncPosRegistry,
+      syncTransactions,
+      posRegistrySyncError,
+      transactionSyncError,
     }),
     [
       state,
@@ -154,6 +246,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       unlockFromMnemonic,
       logout,
       signTestMessage,
+      signPaymentAuthorization,
+      syncPosRegistry,
+      syncTransactions,
+      posRegistrySyncError,
+      transactionSyncError,
     ]
   );
 

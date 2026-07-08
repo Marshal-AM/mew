@@ -20,6 +20,10 @@
   "overrides": {
     "wallet-app": {
       "react": "18.3.1"
+    },
+    "react-native-ble-plx": {
+      "expo": "$expo",
+      "@expo/config-plugins": "$@expo/config-plugins"
     }
   },
   "devDependencies": {

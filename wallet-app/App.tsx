@@ -1,6 +1,6 @@
-import "./src/crypto/setup";
+﻿import "./src/crypto/setup";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,16 +16,24 @@ import {
 import { StatusBar } from "expo-status-bar";
 import * as Clipboard from "expo-clipboard";
 import * as Network from "expo-network";
+import { formatUnits } from "ethers";
 import { WalletProvider, useWallet } from "./src/context/WalletProvider";
 import { createWallet, importWallet, SIGN_TEST_MESSAGE } from "./src/wallet/walletService";
 import { saveMnemonic } from "./src/wallet/secureStorage";
 import { CHAIN, PAYMENT_FORWARDER } from "./src/chain/config";
 import { colors, spacing } from "./src/theme";
+import { PayTab } from "./src/components/PayTab";
+import { getPayoutAddress, getRegistryMeta, listPosRegistry, setPayoutAddress } from "./src/cache/posRegistry";
+import { type PendingPayment } from "./src/cache/pendingPayments";
+import { loadPaymentHistory, statusLabel } from "./src/cache/transactionSync";
+import { registerCustomerKyc, isScreeningConfigured } from "./src/lib/screening";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const SCREENING_STATUS_KEY = "moo_screening_status_v1";
 const QRCodeGenerator = require("qrcode");
 
-type OnboardingStep = "home" | "create" | "backup" | "import";
-type TabKey = "wallet" | "receive" | "history" | "settings";
+type OnboardingStep = "home" | "create" | "backup" | "import" | "kyc";
+type TabKey = "wallet" | "receive" | "pay" | "history" | "settings";
 
 type PendingWallet = {
   mnemonic: string;
@@ -117,16 +125,26 @@ function WalletShell() {
         }}
         onStartImport={() => setStep("import")}
         onShowCreateInfo={() => setStep("create")}
-        onCompleteBackup={async (mnemonic) => {
-          await saveMnemonic(mnemonic);
-          unlockFromMnemonic(mnemonic);
-          setPendingWallet(null);
-          setStep("home");
+        onCompleteBackup={() => {
+          setStep("kyc");
         }}
         onCompleteImport={async (mnemonic) => {
           const wallet = importWallet(mnemonic);
-          await saveMnemonic(wallet.mnemonic);
-          unlockFromMnemonic(wallet.mnemonic);
+          setPendingWallet(wallet);
+          setStep("kyc");
+        }}
+        onCompleteKyc={async (mnemonic, fullName, idDocRef) => {
+          if (!pendingWallet) return;
+          if (isScreeningConfigured()) {
+            const result = await registerCustomerKyc(pendingWallet.address, fullName, idDocRef);
+            await AsyncStorage.setItem(SCREENING_STATUS_KEY, result.screening_status);
+            if (result.screening_status === "blocked") {
+              throw new Error("Identity screening blocked wallet registration");
+            }
+          }
+          await saveMnemonic(mnemonic);
+          unlockFromMnemonic(mnemonic);
+          setPendingWallet(null);
           setStep("home");
         }}
       />
@@ -144,8 +162,9 @@ function OnboardingFlow(props: {
   onCreate: () => void;
   onStartImport: () => void;
   onShowCreateInfo: () => void;
-  onCompleteBackup: (mnemonic: string) => Promise<void>;
+  onCompleteBackup: () => void;
   onCompleteImport: (mnemonic: string) => Promise<void>;
+  onCompleteKyc: (mnemonic: string, fullName: string, idDocRef?: string) => Promise<void>;
 }) {
   if (props.step === "create") {
     return (
@@ -165,7 +184,19 @@ function OnboardingFlow(props: {
     return (
       <BackupScreen
         wallet={props.pendingWallet}
-        onComplete={props.onCompleteBackup}
+        onContinue={props.onCompleteBackup}
+        onBack={props.onBack}
+      />
+    );
+  }
+
+  if (props.step === "kyc" && props.pendingWallet) {
+    return (
+      <KycScreen
+        wallet={props.pendingWallet}
+        onComplete={async (fullName, idDocRef) => {
+          await props.onCompleteKyc(props.pendingWallet!.mnemonic, fullName, idDocRef);
+        }}
         onBack={props.onBack}
       />
     );
@@ -191,15 +222,14 @@ function OnboardingFlow(props: {
 
 function BackupScreen({
   wallet,
-  onComplete,
+  onContinue,
   onBack,
 }: {
   wallet: PendingWallet;
-  onComplete: (mnemonic: string) => Promise<void>;
+  onContinue: () => void;
   onBack: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const words = useMemo(() => wallet.mnemonic.split(" "), [wallet.mnemonic]);
 
@@ -231,19 +261,75 @@ function BackupScreen({
         <Text style={styles.body}>I have written down my recovery phrase safely.</Text>
       </Pressable>
       <PrimaryButton
-        title={saving ? "Saving..." : "Continue to Wallet"}
-        disabled={!confirmed || saving}
-        onPress={async () => {
-          setSaving(true);
-          try {
-            await onComplete(wallet.mnemonic);
-          } finally {
-            setSaving(false);
-          }
-        }}
+        title="Continue to KYC"
+        disabled={!confirmed}
+        onPress={onContinue}
       />
       <SecondaryButton title="Back" onPress={onBack} />
     </ScrollView>
+  );
+}
+
+function KycScreen({
+  wallet,
+  onComplete,
+  onBack,
+}: {
+  wallet: PendingWallet;
+  onComplete: (fullName: string, idDocRef?: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [fullName, setFullName] = useState("");
+  const [idDocRef, setIdDocRef] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView contentContainerStyle={styles.gapLarge}>
+        <Text style={styles.title}>Identity Verification</Text>
+        <Text style={styles.body}>
+          Required before funding. Your name is screened against sanctions lists (UN Security Council and UAE local lists).
+        </Text>
+        <Text style={styles.monoSmall}>Wallet: {wallet.address}</Text>
+        <Text style={styles.sectionLabel}>Full legal name</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Jane Doe"
+          placeholderTextColor={colors.textMuted}
+          value={fullName}
+          onChangeText={setFullName}
+        />
+        <Text style={styles.sectionLabel}>ID reference (optional)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Passport / Emirates ID"
+          placeholderTextColor={colors.textMuted}
+          value={idDocRef}
+          onChangeText={setIdDocRef}
+        />
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        <PrimaryButton
+          title={loading ? "Screening..." : "Submit & Continue"}
+          disabled={loading || fullName.trim().length < 2}
+          onPress={async () => {
+            setLoading(true);
+            setError(null);
+            try {
+              await onComplete(fullName.trim(), idDocRef.trim() || undefined);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "KYC screening failed");
+            } finally {
+              setLoading(false);
+            }
+          }}
+        />
+        <SecondaryButton title="Back" onPress={onBack} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -304,6 +390,7 @@ function MainTabs() {
       <View style={styles.contentArea}>
         {tab === "wallet" ? <WalletTab /> : null}
         {tab === "receive" ? <ReceiveTab /> : null}
+        {tab === "pay" ? <PayTab PrimaryButton={PrimaryButton} /> : null}
         {tab === "history" ? <HistoryTab /> : null}
         {tab === "settings" ? <SettingsTab /> : null}
       </View>
@@ -311,6 +398,7 @@ function MainTabs() {
         {[
           ["wallet", "Wallet"],
           ["receive", "Receive"],
+          ["pay", "Pay"],
           ["history", "History"],
           ["settings", "Settings"],
         ].map(([key, label]) => (
@@ -371,12 +459,26 @@ function WalletTab() {
 
 function ReceiveTab() {
   const { address } = useWallet();
+  const [screeningStatus, setScreeningStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    void AsyncStorage.getItem(SCREENING_STATUS_KEY).then(setScreeningStatus);
+  }, []);
+
+  const blocked = screeningStatus === "blocked";
+  const pending = screeningStatus !== "cleared";
 
   return (
     <ScrollView contentContainerStyle={[styles.screen, styles.centeredContent]}>
       <Text style={styles.title}>Receive</Text>
-      <Text style={styles.body}>Share this address or QR code to receive funds on Polygon Amoy.</Text>
-      {address ? (
+      {blocked ? (
+        <Text style={styles.errorText}>Funding is blocked — identity screening did not clear.</Text>
+      ) : pending ? (
+        <Text style={styles.warningText}>Complete KYC screening before receiving funds.</Text>
+      ) : (
+        <Text style={styles.body}>Share this address or QR code to receive funds on Polygon Amoy.</Text>
+      )}
+      {address && !blocked ? (
         <View style={styles.qrWrap}>
           <AddressQr value={address} size={220} />
         </View>
@@ -420,21 +522,150 @@ function AddressQr({ value, size }: { value: string; size: number }) {
 }
 
 function HistoryTab() {
+  const { syncTransactions, transactionSyncError } = useWallet();
+  const [items, setItems] = useState<PendingPayment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      await syncTransactions();
+      setItems(await loadPaymentHistory());
+    } finally {
+      setLoading(false);
+    }
+  }, [syncTransactions]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
   return (
-    <View style={[styles.screen, styles.centeredContent]}>
-      <Text style={styles.title}>No transactions yet</Text>
-      <Text style={styles.body}>Transactions will appear here once settlement history is wired in later phases.</Text>
-    </View>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.gapLarge}>
+      <Text style={styles.title}>History</Text>
+      <Text style={styles.body}>
+        Payments sync from the merchant backend when online. Pending items update once the pipeline settles on-chain.
+      </Text>
+      {transactionSyncError ? <Text style={styles.warningText}>{transactionSyncError}</Text> : null}
+      <PrimaryButton title="Refresh" onPress={() => void refresh()} />
+      {loading ? <ActivityIndicator color={colors.accent} /> : null}
+      {!loading && items.length === 0 ? (
+        <Text style={styles.body}>No payments yet.</Text>
+      ) : null}
+      {items.map((item) => (
+        <View key={item.id} style={styles.card}>
+          <Text
+            style={[
+              styles.sectionLabel,
+              {
+                color:
+                  item.status === "confirmed"
+                    ? colors.success
+                    : item.status === "pending"
+                      ? colors.warning
+                      : colors.error,
+              },
+            ]}
+          >
+            {statusLabel(item.status)}
+          </Text>
+          <Text style={styles.monoSmall}>{formatUnits(item.value, 6)} MOO</Text>
+          <Text style={styles.monoSmall}>posId: {item.posId}</Text>
+          <Text style={styles.monoSmall}>reqId: {item.reqId}</Text>
+          <Text style={styles.monoSmall}>to: {item.to}</Text>
+          {item.txHash ? <Text style={styles.monoSmall}>tx: {item.txHash}</Text> : null}
+          <Text style={styles.monoSmall}>created: {new Date(item.createdAt).toLocaleString()}</Text>
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 
 function SettingsTab() {
-  const { address, signTestMessage, logout } = useWallet();
+  const { address, signTestMessage, logout, syncPosRegistry, posRegistrySyncError } = useWallet();
   const [result, setResult] = useState<{ signature: string; valid: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [posId, setPosId] = useState("POS-001");
+  const [payoutAddress, setPayoutAddressInput] = useState("");
+  const [registryStatus, setRegistryStatus] = useState<string | null>(null);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryMeta, setRegistryMeta] = useState<{ lastSyncedAt: string | null; deviceCount: number } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const registry = await listPosRegistry();
+      const saved = registry["POS-001"];
+      if (saved) setPayoutAddressInput(saved);
+      setRegistryMeta(await getRegistryMeta());
+    })();
+  }, []);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.gapLarge}>
+      <View style={styles.card}>
+        <Text style={styles.sectionLabel}>POS registry sync</Text>
+        <Text style={styles.body}>
+          Merchants manage POS devices in the dashboard. Sync here while online to cache payout addresses for offline payments.
+        </Text>
+        <Text style={styles.monoSmall}>Cached devices: {registryMeta?.deviceCount ?? 0}</Text>
+        <Text style={styles.monoSmall}>Last synced: {registryMeta?.lastSyncedAt ?? "never"}</Text>
+        {posRegistrySyncError ? <Text style={styles.warningText}>{posRegistrySyncError}</Text> : null}
+        <PrimaryButton
+          title={registryLoading ? "Syncing..." : "Sync POS registry"}
+          disabled={registryLoading}
+          onPress={async () => {
+            setRegistryLoading(true);
+            setRegistryStatus(null);
+            try {
+              await syncPosRegistry();
+              const meta = await getRegistryMeta();
+              setRegistryMeta(meta);
+              setRegistryStatus(`Synced ${meta.deviceCount} device(s).`);
+            } catch (err) {
+              setRegistryStatus(err instanceof Error ? err.message : "Sync failed");
+            } finally {
+              setRegistryLoading(false);
+            }
+          }}
+        />
+        {registryStatus ? <Text style={styles.body}>{registryStatus}</Text> : null}
+        <Text style={[styles.sectionLabel, { marginTop: spacing.md }]}>Dev override (optional)</Text>
+        <Text style={styles.body}>Local override for testnet without dashboard access.</Text>
+        <Text style={styles.monoSmall}>posId</Text>
+        <TextInput
+          value={posId}
+          onChangeText={setPosId}
+          style={styles.input}
+          autoCapitalize="characters"
+        />
+        <Text style={styles.monoSmall}>payout address</Text>
+        <TextInput
+          value={payoutAddress}
+          onChangeText={setPayoutAddressInput}
+          style={styles.input}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <PrimaryButton
+          title={registryLoading ? "Saving..." : "Save payout mapping"}
+          disabled={registryLoading || posId.trim().length === 0 || payoutAddress.trim().length === 0}
+          onPress={async () => {
+            setRegistryLoading(true);
+            setRegistryStatus(null);
+            try {
+              await setPayoutAddress(posId.trim(), payoutAddress.trim());
+              const saved = await getPayoutAddress(posId.trim());
+              setPayoutAddressInput(saved);
+              setRegistryStatus(`Saved ${posId.trim()} â†’ ${saved}`);
+            } catch (err) {
+              setRegistryStatus(err instanceof Error ? err.message : "Failed to save mapping");
+            } finally {
+              setRegistryLoading(false);
+            }
+          }}
+        />
+        {registryStatus ? <Text style={styles.body}>{registryStatus}</Text> : null}
+      </View>
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>Network</Text>
         <Text style={styles.body}>{CHAIN.name}</Text>
@@ -538,5 +769,6 @@ const styles = StyleSheet.create({
   tabLabel: { color: colors.textMuted, fontWeight: "600" },
   tabLabelActive: { color: colors.accent },
 });
+
 
 

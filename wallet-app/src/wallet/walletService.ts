@@ -1,4 +1,6 @@
-import { HDNodeWallet, Mnemonic, Wallet, verifyMessage } from "ethers";
+import { HDNodeWallet, Mnemonic, TypedDataDomain, Wallet, verifyMessage } from "ethers";
+import { TRANSFER_TYPES } from "./eip712";
+import type { TransferMessage } from "./eip712";
 
 export const SIGN_TEST_MESSAGE = "Moo Wallet Amoy test";
 
@@ -55,4 +57,12 @@ export function verifySignature(
   } catch {
     return false;
   }
+}
+
+export async function signTransferWithAuthorization(
+  wallet: HDNodeWallet,
+  domain: TypedDataDomain,
+  message: TransferMessage
+): Promise<string> {
+  return wallet.signTypedData(domain, TRANSFER_TYPES, message);
 }

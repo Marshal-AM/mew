@@ -1,4 +1,22 @@
 ﻿import { ConfigContext, ExpoConfig } from "expo/config";
+import * as dotenv from "dotenv";
+import * as path from "path";
+
+dotenv.config({ path: path.join(__dirname, ".env") });
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
+
+const amoyRpcUrl =
+  process.env.EXPO_PUBLIC_AMOY_RPC_URL ??
+  process.env.AMOY_RPC_URL ??
+  "https://rpc-amoy.polygon.technology/";
+const supabaseUrl =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ??
+  process.env.SUPABASE_URL ??
+  "";
+const supabaseAnonKey =
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
+  process.env.SUPABASE_ANON_KEY ??
+  "";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -44,9 +62,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ["expo-camera", { cameraPermission: "Scan POS payment QR codes" }],
   ],
   extra: {
-    amoyRpcUrl:
-      process.env.EXPO_PUBLIC_AMOY_RPC_URL ?? "https://rpc-amoy.polygon.technology/",
-    supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",
-    supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "",
+    amoyRpcUrl,
+    supabaseUrl,
+    supabaseAnonKey,
   },
 });

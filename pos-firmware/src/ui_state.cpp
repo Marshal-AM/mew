@@ -82,7 +82,10 @@ void uiOnSignedPayment(UiContext* ctx, const char* json) {
   showPendingScreen(ctx->cents);
 
   char reason[96];
-  RelayResult result = relaySubmitPayment(json, reason, sizeof(reason));
+  char txHash[96];
+  RelayResult result = relaySubmitPayment(json, reason, sizeof(reason), txHash, sizeof(txHash));
+  Serial.println("[UI] relay complete; sending settlement result over BLE");
+  bleTransportNotifySettlement(result, reason, txHash);
 
   switch (result) {
     case RELAY_APPROVED:

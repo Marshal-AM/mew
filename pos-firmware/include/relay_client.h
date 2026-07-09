@@ -9,4 +9,9 @@ typedef enum {
   RELAY_ERROR,
 } RelayResult;
 
-RelayResult relaySubmitPayment(const char* signedJson, char* reasonOut, size_t reasonLen);
+RelayResult relaySubmitPayment(
+    const char* signedJson,
+    char* reasonOut,
+    size_t reasonLen,
+    char* txHashOut,
+    size_t txHashLen);

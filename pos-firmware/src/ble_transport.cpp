@@ -18,16 +18,19 @@ static SignedPaymentHandler signedPaymentHandler = nullptr;
 static const uint16_t BLE_NOTIFY_GAP_MS = 30;
 static char pendingSignedPayment[BLE_MAX_MESSAGE_BYTES];
 static bool pendingSignedPaymentReady = false;
+static bool bleClientConnected = false;
 
 static char deviceName[24];
 
 class MooServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& connInfo) override {
+    bleClientConnected = true;
     Serial.printf("[BLE] client connected: %s\n", connInfo.getAddress().toString().c_str());
     server->updateConnParams(connInfo.getConnHandle(), 24, 48, 0, 180);
   }
 
   void onDisconnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& /*connInfo*/, int reason) override {
+    bleClientConnected = false;
     Serial.printf("[BLE] client disconnected (%d)\n", reason);
     rxAssembler.reset();
     NimBLEDevice::startAdvertising();
@@ -43,6 +46,7 @@ static MooServerCallbacks serverCallbacks;
 
 static void notifyJson(const char* json) {
   if (notifyChar == nullptr) {
+    Serial.println("[BLE] notify skipped: characteristic not ready");
     return;
   }
   notifyChar->setValue((uint8_t*)json, strlen(json));
@@ -56,6 +60,34 @@ static void notifyPosInfo() {
   char info[160];
   bleFormatPosInfo(POS_ID, POS_PAYOUT_ADDRESS, info, sizeof(info));
   notifyJson(info);
+}
+
+static const char* relayStatusToString(RelayResult result) {
+  switch (result) {
+    case RELAY_APPROVED:
+      return "approved";
+    case RELAY_HELD:
+      return "held";
+    case RELAY_DECLINED:
+      return "declined";
+    default:
+      return "error";
+  }
+}
+
+static void copyJsonSafe(const char* src, char* out, size_t outLen) {
+  if (outLen == 0) {
+    return;
+  }
+  size_t j = 0;
+  for (size_t i = 0; src != nullptr && src[i] != '\0' && j + 1 < outLen; i++) {
+    char c = src[i];
+    if (c == '"' || c == '\\' || c == '\n' || c == '\r') {
+      c = ' ';
+    }
+    out[j++] = c;
+  }
+  out[j] = '\0';
 }
 
 static bool queueSignedPayment(const char* json) {
@@ -118,11 +150,12 @@ class MooWriteCallbacks : public NimBLECharacteristicCallbacks {
     const uint8_t* payload = (const uint8_t*)frame.data() + 2;
     size_t payloadLen = frame.size() - 2;
 
+    char ack[32];
+    bleFormatChunkAck(seq, ack, sizeof(ack));
+    notifyJson(ack);
+
     size_t assembledLen = 0;
     if (!rxAssembler.addChunk(seq, total, payload, payloadLen, rxBuffer, &assembledLen)) {
-      char ack[32];
-      bleFormatChunkAck(seq, ack, sizeof(ack));
-      notifyJson(ack);
       return;
     }
 
@@ -227,6 +260,50 @@ void bleTransportOnQrShown() {
 
 void bleTransportSetSignedPaymentHandler(SignedPaymentHandler handler) {
   signedPaymentHandler = handler;
+}
+
+void bleTransportNotifySettlement(RelayResult result, const char* reason, const char* txHash) {
+  char safeReason[128];
+  char safeTxHash[96];
+  copyJsonSafe(reason, safeReason, sizeof(safeReason));
+  copyJsonSafe(txHash, safeTxHash, sizeof(safeTxHash));
+
+  char payload[320];
+  if (safeTxHash[0] != '\0') {
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"t\":\"sr\",\"status\":\"%s\",\"reason\":\"%s\",\"txHash\":\"%s\"}",
+        relayStatusToString(result),
+        safeReason,
+        safeTxHash);
+  } else {
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"t\":\"sr\",\"status\":\"%s\",\"reason\":\"%s\"}",
+        relayStatusToString(result),
+        safeReason);
+  }
+
+  Serial.printf(
+      "[BLE_SETTLEMENT] preparing notify status=%s client_connected=%s\n",
+      relayStatusToString(result),
+      bleClientConnected ? "yes" : "no");
+  if (safeReason[0] != '\0') {
+    Serial.printf("[BLE_SETTLEMENT] reason=%s\n", safeReason);
+  }
+  if (safeTxHash[0] != '\0') {
+    Serial.printf("[BLE_SETTLEMENT] txHash=%s\n", safeTxHash);
+  }
+  Serial.print("[BLE_SETTLEMENT] notify payload: ");
+  Serial.println(payload);
+  if (!bleClientConnected) {
+    Serial.println("[BLE_SETTLEMENT] WARN phone not connected; settlement notify may be missed");
+  }
+
+  notifyJson(payload);
+  Serial.println("[BLE_SETTLEMENT] notify transmitted");
 }
 
 bool bleTransportTakePendingSignedPayment(char* out, size_t outLen) {

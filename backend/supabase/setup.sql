@@ -336,15 +336,18 @@ INSERT INTO public.merchants (id, name, wallet_address)
 VALUES (
   '11111111-1111-4111-8111-111111111111',
   'Demo Merchant',
-  '0x0000000000000000000000000000000000000001'
+  '0x2514844F312c02Ae3C9d4fEb40db4eC8830b6844'
 )
-ON CONFLICT (wallet_address) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  wallet_address = EXCLUDED.wallet_address,
+  updated_at = now();
 
 INSERT INTO public.pos_devices (pos_id, merchant_id, payout_address, label, active)
 VALUES (
   'POS-001',
   '11111111-1111-4111-8111-111111111111',
-  '0x0000000000000000000000000000000000000002',
+  '0x2514844F312c02Ae3C9d4fEb40db4eC8830b6844',
   'Main counter',
   true
 )

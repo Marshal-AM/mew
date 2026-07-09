@@ -4,6 +4,7 @@ import "./src/logging/install";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -27,11 +28,17 @@ import { PayTab } from "./src/components/PayTab";
 import { getPayoutAddress, getRegistryMeta, listPosRegistry, setPayoutAddress } from "./src/cache/posRegistry";
 import { type PendingPayment } from "./src/cache/pendingPayments";
 import { loadPaymentHistory, statusLabel } from "./src/cache/transactionSync";
-import { registerCustomerKyc, isScreeningConfigured } from "./src/lib/screening";
+import {
+  getCustomerScreeningRecord,
+  registerCustomerKyc,
+  isScreeningConfigured,
+  type CustomerScreeningRecord,
+} from "./src/lib/screening";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { clearLogs, getLogs, subscribeLogs, type LogEntry } from "./src/logging/appLogs";
 
-const SCREENING_STATUS_KEY = "moo_screening_status_v1";
+const SCREENING_STATUS_KEY_PREFIX = "moo_screening_status_v2";
+const SCREENING_NAME_KEY_PREFIX = "moo_screening_name_v2";
 const QRCodeGenerator = require("qrcode");
 
 type OnboardingStep = "home" | "create" | "backup" | "import" | "kyc";
@@ -41,6 +48,14 @@ type PendingWallet = {
   mnemonic: string;
   address: string;
 };
+
+function screeningStatusKey(walletAddress: string): string {
+  return `${SCREENING_STATUS_KEY_PREFIX}:${walletAddress.toLowerCase()}`;
+}
+
+function screeningNameKey(walletAddress: string): string {
+  return `${SCREENING_NAME_KEY_PREFIX}:${walletAddress.toLowerCase()}`;
+}
 
 type FatalBoundaryState = {
   error: string | null;
@@ -133,21 +148,63 @@ function WalletShell() {
         onCompleteImport={async (mnemonic) => {
           const wallet = importWallet(mnemonic);
           setPendingWallet(wallet);
+          console.log("[KYC] imported wallet pending screening", { wallet: wallet.address });
           setStep("kyc");
         }}
         onCompleteKyc={async (mnemonic, fullName, idDocRef) => {
           if (!pendingWallet) return;
+          console.log("[KYC] onboarding submit start", {
+            wallet: pendingWallet.address,
+            fullName,
+            hasIdDocRef: Boolean(idDocRef),
+            screeningConfigured: isScreeningConfigured(),
+          });
           if (isScreeningConfigured()) {
             const result = await registerCustomerKyc(pendingWallet.address, fullName, idDocRef);
-            await AsyncStorage.setItem(SCREENING_STATUS_KEY, result.screening_status);
+            console.log("[KYC] onboarding register-customer success", {
+              wallet: pendingWallet.address,
+              customerId: result.customer_id,
+              screeningStatus: result.screening_status,
+              screening: result.screening,
+            });
+            await AsyncStorage.multiSet([
+              [screeningStatusKey(pendingWallet.address), result.screening_status],
+              [screeningNameKey(pendingWallet.address), fullName],
+            ]);
             if (result.screening_status === "blocked") {
               throw new Error("Identity screening blocked wallet registration");
             }
+            const record = await getCustomerScreeningRecord(pendingWallet.address);
+            console.log("[KYC] onboarding backend screening record", {
+              wallet: pendingWallet.address,
+              record,
+            });
+            if (!record?.full_name || record.screening_status !== "cleared") {
+              throw new Error(
+                "Screening did not persist for this wallet. Please try again before continuing."
+              );
+            }
           }
-          await saveMnemonic(mnemonic);
-          unlockFromMnemonic(mnemonic);
-          setPendingWallet(null);
-          setStep("home");
+          Alert.alert(
+            "Wallet screening successful",
+            `Wallet ${pendingWallet.address} is cleared and can proceed.`,
+            [
+              {
+                text: "OK",
+                onPress: () => {
+                  void (async () => {
+                    console.log("[KYC] onboarding success acknowledged", {
+                      wallet: pendingWallet.address,
+                    });
+                    await saveMnemonic(mnemonic);
+                    unlockFromMnemonic(mnemonic);
+                    setPendingWallet(null);
+                    setStep("home");
+                  })();
+                },
+              },
+            ]
+          );
         }}
       />
     );
@@ -466,8 +523,12 @@ function ReceiveTab() {
   const [screeningStatus, setScreeningStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    void AsyncStorage.getItem(SCREENING_STATUS_KEY).then(setScreeningStatus);
-  }, []);
+    if (!address) {
+      setScreeningStatus(null);
+      return;
+    }
+    void AsyncStorage.getItem(screeningStatusKey(address)).then(setScreeningStatus);
+  }, [address]);
 
   const blocked = screeningStatus === "blocked";
   const pending = screeningStatus !== "cleared";
@@ -594,6 +655,39 @@ function SettingsTab() {
   const [registryStatus, setRegistryStatus] = useState<string | null>(null);
   const [registryLoading, setRegistryLoading] = useState(false);
   const [registryMeta, setRegistryMeta] = useState<{ lastSyncedAt: string | null; deviceCount: number } | null>(null);
+  const [screeningRecord, setScreeningRecord] = useState<CustomerScreeningRecord | null>(null);
+  const [screeningName, setScreeningName] = useState("");
+  const [screeningDocRef, setScreeningDocRef] = useState("");
+  const [screeningLoading, setScreeningLoading] = useState(false);
+  const [screeningStatusText, setScreeningStatusText] = useState<string | null>(null);
+
+  const refreshScreening = useCallback(async () => {
+    if (!address || !isScreeningConfigured()) {
+      setScreeningRecord(null);
+      setScreeningStatusText(null);
+      return;
+    }
+    console.log("[KYC] refresh current wallet status start", { wallet: address });
+    try {
+      const [record, savedName] = await Promise.all([
+        getCustomerScreeningRecord(address),
+        AsyncStorage.getItem(screeningNameKey(address)),
+      ]);
+      setScreeningRecord(record);
+      if (!screeningName && savedName) {
+        setScreeningName(savedName);
+      }
+      const message = record
+        ? `Backend status: ${record.screening_status}${record.full_name ? ` for ${record.full_name}` : ""}`
+        : "Backend status: no screening record for this wallet yet.";
+      setScreeningStatusText(message);
+      console.log("[KYC] refresh current wallet status result", { wallet: address, record });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load KYC status";
+      setScreeningStatusText(message);
+      console.error("[KYC] refresh current wallet status failed", { wallet: address, message });
+    }
+  }, [address, screeningName]);
 
   useEffect(() => {
     void (async () => {
@@ -604,8 +698,105 @@ function SettingsTab() {
     })();
   }, []);
 
+  useEffect(() => {
+    void refreshScreening();
+  }, [refreshScreening]);
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.gapLarge}>
+      <View style={styles.card}>
+        <Text style={styles.sectionLabel}>Wallet screening</Text>
+        <Text style={styles.body}>
+          Root cause: the old app only saved a global local screening flag and never checked the backend record for the currently unlocked wallet. This view shows the live backend status for the active wallet and lets you re-run screening for this exact wallet.
+        </Text>
+        <Text style={styles.monoSmall}>Wallet: {address ?? "No wallet loaded"}</Text>
+        {screeningRecord ? (
+          <>
+            <Text style={styles.monoSmall}>Backend name: {screeningRecord.full_name ?? "missing"}</Text>
+            <Text style={styles.monoSmall}>Backend status: {screeningRecord.screening_status}</Text>
+            <Text style={styles.monoSmall}>Screened at: {screeningRecord.screened_at ?? "not yet"}</Text>
+          </>
+        ) : null}
+        {screeningStatusText ? <Text style={styles.body}>{screeningStatusText}</Text> : null}
+        <Text style={styles.monoSmall}>Full legal name</Text>
+        <TextInput
+          value={screeningName}
+          onChangeText={setScreeningName}
+          style={styles.singleLineInput}
+          placeholder="Jane Doe"
+          placeholderTextColor={colors.textMuted}
+        />
+        <Text style={styles.monoSmall}>ID reference</Text>
+        <TextInput
+          value={screeningDocRef}
+          onChangeText={setScreeningDocRef}
+          style={styles.singleLineInput}
+          placeholder="Passport / Emirates ID"
+          placeholderTextColor={colors.textMuted}
+        />
+        <View style={styles.buttonRow}>
+          <PrimaryButton
+            title={screeningLoading ? "Submitting..." : "Run screening for this wallet"}
+            disabled={!address || screeningLoading || screeningName.trim().length < 2}
+            onPress={async () => {
+              if (!address) return;
+              setScreeningLoading(true);
+              setScreeningStatusText(null);
+              console.log("[KYC] current wallet screening submit start", {
+                wallet: address,
+                fullName: screeningName.trim(),
+                hasIdDocRef: Boolean(screeningDocRef.trim()),
+              });
+              try {
+                const result = await registerCustomerKyc(
+                  address,
+                  screeningName.trim(),
+                  screeningDocRef.trim() || undefined
+                );
+                await AsyncStorage.multiSet([
+                  [screeningStatusKey(address), result.screening_status],
+                  [screeningNameKey(address), screeningName.trim()],
+                ]);
+                console.log("[KYC] current wallet register-customer success", {
+                  wallet: address,
+                  customerId: result.customer_id,
+                  screeningStatus: result.screening_status,
+                  screening: result.screening,
+                });
+                const record = await getCustomerScreeningRecord(address);
+                console.log("[KYC] current wallet backend screening record", {
+                  wallet: address,
+                  record,
+                });
+                setScreeningRecord(record);
+                if (!record?.full_name || record.screening_status !== "cleared") {
+                  throw new Error(
+                    "Screening response returned, but backend did not persist a cleared status for this wallet."
+                  );
+                }
+                setScreeningStatusText(`Backend status: ${record.screening_status} for ${record.full_name}`);
+                Alert.alert(
+                  "Wallet screening successful",
+                  `Wallet ${address} is whitelisted for transactions.`,
+                  [{ text: "OK" }]
+                );
+              } catch (err) {
+                const message = err instanceof Error ? err.message : "KYC screening failed";
+                setScreeningStatusText(message);
+                console.error("[KYC] current wallet screening failed", { wallet: address, message });
+              } finally {
+                setScreeningLoading(false);
+              }
+            }}
+          />
+          <SecondaryButton
+            title="Refresh backend status"
+            onPress={async () => {
+              await refreshScreening();
+            }}
+          />
+        </View>
+      </View>
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>POS payout mapping</Text>
         <Text style={styles.body}>
@@ -807,6 +998,7 @@ const styles = StyleSheet.create({
   qrCell: {},
   monoSmall: { color: colors.textMuted, fontFamily: "monospace", fontSize: 12, lineHeight: 18 },
   input: { minHeight: 140, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface, color: colors.text, padding: spacing.md, textAlignVertical: "top", marginBottom: spacing.md },
+  singleLineInput: { minHeight: 50, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface, color: colors.text, padding: spacing.md, marginBottom: spacing.md },
   wordGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   wordCell: { width: "47%", flexDirection: "row", gap: spacing.sm, backgroundColor: colors.surface, borderRadius: 10, padding: spacing.sm },
   wordIndex: { color: colors.textMuted, width: 20 },

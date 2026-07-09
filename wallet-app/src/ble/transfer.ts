@@ -2,6 +2,7 @@ import { Device } from "react-native-ble-plx";
 import {
   BLE_CHUNK_ACK_TIMEOUT_MS,
   BLE_TRANSFER_TIMEOUT_MS,
+  NotifyMessage,
   parseNotifyMessage,
 } from "../protocol/ble";
 import {
@@ -23,12 +24,15 @@ export type TransferProgress = {
 
 type EchoPart = { index: number; total: number; hex: string };
 type PosInfo = { posId: string; payoutAddress: string };
+export type SettlementNotify = Extract<NotifyMessage, { t: "sr" }>;
+const BLE_SETTLEMENT_TIMEOUT_MS = 20000;
 
 export async function sendJsonPayload(
   device: Device,
   json: string,
-  onProgress?: (progress: TransferProgress) => void
-): Promise<{ ok: true; echo: string } | { ok: false; error: string }> {
+  onProgress?: (progress: TransferProgress) => void,
+  waitForSettlement = false
+): Promise<{ ok: true; echo: string; settlement?: SettlementNotify } | { ok: false; error: string }> {
   payFlowLog.info("Transfer", "sendJsonPayload start", {
     deviceId: device.id,
     jsonLen: json.length,
@@ -44,7 +48,41 @@ export async function sendJsonPayload(
   const echoParts: EchoPart[] = [];
   let echoDone = false;
   let transferError: string | null = null;
-  let ackResolver: ((seq: number) => void) | null = null;
+  let pendingAckSeq: number | null = null;
+  let allowImplicitFinalAck = false;
+  let ackCompleteResolver: ((acked: boolean) => void) | null = null;
+  let settlement: SettlementNotify | null = null;
+  let settlementResolver: ((value: SettlementNotify) => void) | null = null;
+
+  const clearPendingAck = () => {
+    pendingAckSeq = null;
+    allowImplicitFinalAck = false;
+    ackCompleteResolver = null;
+  };
+
+  const resolvePendingAck = (seq: number, implicit = false, reason?: string) => {
+    if (pendingAckSeq === null || !ackCompleteResolver) {
+      return;
+    }
+    if (seq !== pendingAckSeq) {
+      return;
+    }
+    if (implicit) {
+      payFlowLog.warn("Transfer", reason ?? "implicit final chunk ack", { seq });
+    } else {
+      payFlowLog.info("Transfer", "chunk ack", { seq });
+    }
+    const resolver = ackCompleteResolver;
+    clearPendingAck();
+    resolver(true);
+  };
+
+  const tryImplicitFinalAck = (reason: string) => {
+    if (!allowImplicitFinalAck || pendingAckSeq === null) {
+      return;
+    }
+    resolvePendingAck(pendingAckSeq, true, reason);
+  };
 
   const notify = monitorNotifications(connected, (raw) => {
     if (raw.includes("\"t\":\"ep\"")) {
@@ -64,6 +102,7 @@ export async function sendJsonPayload(
     if (raw.includes("\"t\":\"echo_done\"")) {
       echoDone = true;
       payFlowLog.info("Transfer", "echo done");
+      tryImplicitFinalAck("final chunk ack missed; treating echo_done as completion");
       return;
     }
 
@@ -73,9 +112,15 @@ export async function sendJsonPayload(
       return;
     }
 
-    if (msg.t === "ca" && ackResolver) {
-      payFlowLog.info("Transfer", "chunk ack", { seq: msg.s });
-      ackResolver(msg.s);
+    if (msg.t === "ca") {
+      resolvePendingAck(msg.s);
+      return;
+    }
+
+    if (msg.t === "sr") {
+      settlement = msg;
+      payFlowLog.info("Transfer", "settlement notify", msg);
+      settlementResolver?.(msg);
       return;
     }
 
@@ -84,6 +129,7 @@ export async function sendJsonPayload(
       payFlowLog.error("Transfer", "device error", msg.m);
     } else if (msg.t === "ok") {
       payFlowLog.info("Transfer", "device ok", { len: msg.len });
+      tryImplicitFinalAck("final chunk ack missed; treating device ok as completion");
     }
   });
 
@@ -95,20 +141,30 @@ export async function sendJsonPayload(
     for (let i = 0; i < frames.length; i++) {
       const frame = frames[i];
       const encoded = encodeFrame(frame);
+      const isFinalFrame = i === frames.length - 1;
       payFlowLog.info("Transfer", "sending frame", { seq: frame.seq, total: frame.total, bytes: encoded.length });
 
       const ackPromise = new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => {
-          ackResolver = null;
+          if (isFinalFrame && echoDone) {
+            payFlowLog.warn("Transfer", "final chunk ack timeout but echo already done", {
+              seq: frame.seq,
+              timeoutMs: BLE_CHUNK_ACK_TIMEOUT_MS,
+            });
+            clearPendingAck();
+            resolve(true);
+            return;
+          }
           payFlowLog.error("Transfer", "chunk ack timeout", { seq: frame.seq, timeoutMs: BLE_CHUNK_ACK_TIMEOUT_MS });
+          clearPendingAck();
           resolve(false);
         }, BLE_CHUNK_ACK_TIMEOUT_MS);
-        ackResolver = (ackedSeq) => {
-          if (ackedSeq === frame.seq) {
-            clearTimeout(timer);
-            ackResolver = null;
-            resolve(true);
-          }
+
+        pendingAckSeq = frame.seq;
+        allowImplicitFinalAck = isFinalFrame;
+        ackCompleteResolver = (acked) => {
+          clearTimeout(timer);
+          resolve(acked);
         };
       });
 
@@ -124,6 +180,26 @@ export async function sendJsonPayload(
 
     onProgress?.({ phase: "waiting_echo", sentChunks: frames.length, totalChunks: frames.length });
     payFlowLog.info("Transfer", "waiting for echo");
+
+    if (echoDone && echoParts.length === 0) {
+      payFlowLog.warn("Transfer", "echo_done without echo parts; accepting sent payload");
+      onProgress?.({
+        phase: "done",
+        sentChunks: frames.length,
+        totalChunks: frames.length,
+        message: "Payload delivered (implicit echo)",
+      });
+      if (waitForSettlement) {
+        const settled = await waitForSettlementNotify(() => settlement, (resolve) => {
+          settlementResolver = resolve;
+        }, BLE_SETTLEMENT_TIMEOUT_MS);
+        if (settled) {
+          return { ok: true, echo: json, settlement: settled };
+        }
+        payFlowLog.warn("Transfer", "settlement notify timeout; falling back to pending UX");
+      }
+      return { ok: true, echo: json };
+    }
 
     const echoed = await waitForEcho(() => echoDone, echoParts, BLE_TRANSFER_TIMEOUT_MS);
     if (transferError) {
@@ -144,7 +220,21 @@ export async function sendJsonPayload(
       message: matches ? "Echo matches sent payload" : "Echo mismatch",
     });
 
-    return matches ? { ok: true, echo: echoed } : { ok: false, error: "Echo mismatch" };
+    if (!matches) {
+      return { ok: false, error: "Echo mismatch" };
+    }
+
+    if (waitForSettlement) {
+      const settled = settlement ?? await waitForSettlementNotify(() => settlement, (resolve) => {
+        settlementResolver = resolve;
+      }, BLE_SETTLEMENT_TIMEOUT_MS);
+      if (settled) {
+        return { ok: true, echo: echoed, settlement: settled };
+      }
+      payFlowLog.warn("Transfer", "settlement notify timeout; falling back to pending UX");
+    }
+
+    return { ok: true, echo: echoed };
   } finally {
     notify.remove();
     try {
@@ -277,6 +367,26 @@ export async function sendSignedPayment(
   device: Device,
   json: string,
   onProgress?: (progress: TransferProgress) => void
-): Promise<{ ok: true; echo: string } | { ok: false; error: string }> {
-  return sendJsonPayload(device, json, onProgress);
+): Promise<{ ok: true; echo: string; settlement?: SettlementNotify } | { ok: false; error: string }> {
+  return sendJsonPayload(device, json, onProgress, true);
+}
+
+async function waitForSettlementNotify(
+  getCurrent: () => SettlementNotify | null,
+  registerResolver: (resolve: (value: SettlementNotify) => void) => void,
+  timeoutMs: number
+): Promise<SettlementNotify | null> {
+  const current = getCurrent();
+  if (current) {
+    return current;
+  }
+  return await new Promise<SettlementNotify | null>((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(null);
+    }, timeoutMs);
+    registerResolver((value) => {
+      clearTimeout(timer);
+      resolve(value);
+    });
+  });
 }

@@ -17,7 +17,8 @@ export type NotifyMessage =
   | { t: "ca"; s: number }
   | { t: "ok"; len: number }
   | { t: "err"; m: string }
-  | { t: "pi"; posId: string; payoutAddress: string };
+  | { t: "pi"; posId: string; payoutAddress: string }
+  | { t: "sr"; status: "approved" | "held" | "declined" | "error"; reason?: string; txHash?: string };
 
 export function parseNotifyMessage(raw: string): NotifyMessage | null {
   try {

@@ -16,8 +16,22 @@
 #define SUPABASE_ANON_KEY ""
 #endif
 
-static RelayResult parseStatus(const char* status, char* reasonOut, size_t reasonLen, const JsonDocument& doc) {
+static RelayResult parseStatus(
+    const char* status,
+    char* reasonOut,
+    size_t reasonLen,
+    char* txHashOut,
+    size_t txHashLen,
+    const JsonDocument& doc) {
+  if (txHashOut && txHashLen > 0) {
+    txHashOut[0] = '\0';
+  }
   if (strcmp(status, "approved") == 0) {
+    if (txHashOut && txHashLen > 0) {
+      const char* txHash = doc["txHash"] | "";
+      strncpy(txHashOut, txHash, txHashLen - 1);
+      txHashOut[txHashLen - 1] = '\0';
+    }
     return RELAY_APPROVED;
   }
   if (strcmp(status, "held") == 0) {
@@ -36,9 +50,17 @@ static RelayResult parseStatus(const char* status, char* reasonOut, size_t reaso
   return RELAY_DECLINED;
 }
 
-RelayResult relaySubmitPayment(const char* signedJson, char* reasonOut, size_t reasonLen) {
+RelayResult relaySubmitPayment(
+    const char* signedJson,
+    char* reasonOut,
+    size_t reasonLen,
+    char* txHashOut,
+    size_t txHashLen) {
   if (reasonOut && reasonLen > 0) {
     reasonOut[0] = '\0';
+  }
+  if (txHashOut && txHashLen > 0) {
+    txHashOut[0] = '\0';
   }
 
   if (strlen(SUBMIT_URL) == 0 || strlen(SUPABASE_ANON_KEY) == 0) {
@@ -103,5 +125,5 @@ RelayResult relaySubmitPayment(const char* signedJson, char* reasonOut, size_t r
     return RELAY_ERROR;
   }
 
-  return parseStatus(status, reasonOut, reasonLen, doc);
+  return parseStatus(status, reasonOut, reasonLen, txHashOut, txHashLen, doc);
 }

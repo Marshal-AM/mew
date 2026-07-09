@@ -10,7 +10,7 @@ import { serializeSignedPayment } from "../protocol/signedPayment";
 import { requestBlePermissions, scanForPosDevice, waitForPoweredOn } from "../ble/BleManager";
 import { requestPosInfo, sendSignedPayment, TransferProgress } from "../ble/transfer";
 import { fetchPosDevice, getPayoutAddress, truncateAddress } from "../cache/posRegistry";
-import { addPendingPayment, listPendingPayments } from "../cache/pendingPayments";
+import { addPendingPayment, listPendingPayments, updatePendingStatus } from "../cache/pendingPayments";
 import { MOO_DECIMALS, MOO_TOKEN_ADDRESS } from "../wallet/eip712";
 import { getTokenAllowance } from "../chain/allowances";
 import { PAYMENT_FORWARDER } from "../chain/config";
@@ -309,6 +309,47 @@ export function PayTab({ PrimaryButton }: PayTabProps) {
       }
 
       const entry = await addPendingPayment(signed);
+      const settlement = transfer.settlement;
+      if (settlement?.status === "approved") {
+        await updatePendingStatus(entry.id, "confirmed", {
+          txHash: settlement.txHash,
+          confirmedAt: Date.now(),
+        });
+        setPendingId(null);
+        setStatus(
+          `Payment confirmed on-chain${settlement.txHash ? `: ${settlement.txHash.slice(0, 14)}...` : "."}`
+        );
+        payFlowLog.info("Pay", "payment confirmed over BLE", {
+          pendingId: entry.id,
+          txHash: settlement.txHash ?? null,
+        });
+        await syncTransactions();
+        return;
+      }
+      if (settlement?.status === "held") {
+        await updatePendingStatus(entry.id, "held");
+        setPendingId(null);
+        setStatus(`Payment held${settlement.reason ? `: ${settlement.reason}` : "."}`);
+        payFlowLog.warn("Pay", "payment held over BLE", {
+          pendingId: entry.id,
+          reason: settlement.reason ?? null,
+        });
+        await syncTransactions();
+        return;
+      }
+      if (settlement?.status === "declined" || settlement?.status === "error") {
+        await updatePendingStatus(entry.id, "declined");
+        setPendingId(null);
+        setStatus(`Payment declined${settlement.reason ? `: ${settlement.reason}` : "."}`);
+        payFlowLog.error("Pay", "payment declined over BLE", {
+          pendingId: entry.id,
+          reason: settlement.reason ?? null,
+          status: settlement.status,
+        });
+        await syncTransactions();
+        return;
+      }
+
       setPendingId(entry.id);
       setStatus("Payment pending — awaiting merchant relay.");
       payFlowLog.info("Pay", "payment queued as pending", { pendingId: entry.id });

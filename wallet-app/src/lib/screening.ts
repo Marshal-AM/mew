@@ -13,6 +13,14 @@ export type RegisterCustomerResult = {
   error?: string;
 };
 
+export type CustomerScreeningRecord = {
+  id: string;
+  wallet_address: string;
+  full_name: string | null;
+  screening_status: "cleared" | "blocked" | "pending";
+  screened_at: string | null;
+};
+
 function getSupabaseUrl(): string | null {
   return process.env.EXPO_PUBLIC_SUPABASE_URL ?? (Constants.expoConfig?.extra?.supabaseUrl as string) ?? null;
 }
@@ -56,4 +64,37 @@ export async function registerCustomerKyc(
     throw new Error(body.error ?? `KYC registration failed (${res.status})`);
   }
   return body;
+}
+
+export async function getCustomerScreeningRecord(
+  walletAddress: string
+): Promise<CustomerScreeningRecord | null> {
+  const url = getSupabaseUrl();
+  const anonKey = getAnonKey();
+  if (!url || !anonKey) {
+    throw new Error("Supabase is not configured for KYC screening");
+  }
+
+  const endpoint =
+    `${url.replace(/\/$/, "")}/rest/v1/customers` +
+    `?select=id,wallet_address,full_name,screening_status,screened_at` +
+    `&wallet_address=eq.${walletAddress.toLowerCase()}` +
+    `&limit=1`;
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Customer screening lookup failed (${res.status})`);
+  }
+
+  const rows = (await res.json()) as CustomerScreeningRecord[];
+  return rows[0] ?? null;
 }

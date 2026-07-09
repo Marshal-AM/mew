@@ -15,6 +15,9 @@ static uint16_t negotiatedMtu = BLE_DEFAULT_MTU;
 static BleChunkReassembler rxAssembler;
 static uint8_t rxBuffer[BLE_MAX_MESSAGE_BYTES];
 static SignedPaymentHandler signedPaymentHandler = nullptr;
+static const uint16_t BLE_NOTIFY_GAP_MS = 30;
+static char pendingSignedPayment[BLE_MAX_MESSAGE_BYTES];
+static bool pendingSignedPaymentReady = false;
 
 static char deviceName[24];
 
@@ -34,24 +37,6 @@ class MooServerCallbacks : public NimBLEServerCallbacks {
     negotiatedMtu = mtu;
     Serial.printf("[BLE] MTU %u (conn %u)\n", mtu, connInfo.getConnHandle());
   }
-
-  uint32_t onPassKeyDisplay() override {
-    return BLE_DEV_PASSKEY;
-  }
-
-  void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t passkey) override {
-    Serial.printf("[BLE] confirm passkey %" PRIu32 "\n", passkey);
-    NimBLEDevice::injectConfirmPasskey(connInfo, true);
-  }
-
-  void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
-    if (!connInfo.isEncrypted()) {
-      Serial.println("[BLE] encryption failed, disconnecting");
-      NimBLEDevice::getServer()->disconnect(connInfo.getConnHandle());
-      return;
-    }
-    Serial.printf("[BLE] secured: %s\n", connInfo.getAddress().toString().c_str());
-  }
 };
 
 static MooServerCallbacks serverCallbacks;
@@ -62,6 +47,34 @@ static void notifyJson(const char* json) {
   }
   notifyChar->setValue((uint8_t*)json, strlen(json));
   notifyChar->notify();
+  // Android was only receiving the final notify in a burst (often "echo_done"),
+  // so pace server notifications slightly to avoid overwriting earlier payloads.
+  delay(BLE_NOTIFY_GAP_MS);
+}
+
+static void notifyPosInfo() {
+  char info[160];
+  bleFormatPosInfo(POS_ID, POS_PAYOUT_ADDRESS, info, sizeof(info));
+  notifyJson(info);
+}
+
+static bool queueSignedPayment(const char* json) {
+  if (json == nullptr) {
+    return false;
+  }
+  size_t len = strlen(json);
+  if (len + 1 > sizeof(pendingSignedPayment)) {
+    Serial.printf("[BLE] signed payment too large for queue (%u)\n", (unsigned)len);
+    return false;
+  }
+  if (pendingSignedPaymentReady) {
+    Serial.println("[BLE] signed payment queue busy");
+    return false;
+  }
+  memcpy(pendingSignedPayment, json, len + 1);
+  pendingSignedPaymentReady = true;
+  Serial.printf("[BLE] queued signed payment len=%u\n", (unsigned)len);
+  return true;
 }
 
 static void notifyEchoHex(const uint8_t* data, size_t len) {
@@ -105,12 +118,11 @@ class MooWriteCallbacks : public NimBLECharacteristicCallbacks {
     const uint8_t* payload = (const uint8_t*)frame.data() + 2;
     size_t payloadLen = frame.size() - 2;
 
-    char ack[32];
-    bleFormatChunkAck(seq, ack, sizeof(ack));
-    notifyJson(ack);
-
     size_t assembledLen = 0;
     if (!rxAssembler.addChunk(seq, total, payload, payloadLen, rxBuffer, &assembledLen)) {
+      char ack[32];
+      bleFormatChunkAck(seq, ack, sizeof(ack));
+      notifyJson(ack);
       return;
     }
 
@@ -123,7 +135,10 @@ class MooWriteCallbacks : public NimBLECharacteristicCallbacks {
     }
 
     rxBuffer[assembledLen] = '\0';
-    if (strstr((const char*)rxBuffer, "\"t\":\"sp\"") != nullptr) {
+    const bool isSignedPayment = strstr((const char*)rxBuffer, "\"t\":\"sp\"") != nullptr;
+    const bool isPosInfoRequest = strstr((const char*)rxBuffer, "\"t\":\"pi\"") != nullptr;
+
+    if (isSignedPayment) {
       const char* nonceKey = "\"posNonce\":\"";
       const char* start = strstr((const char*)rxBuffer, nonceKey);
       if (start != nullptr) {
@@ -144,14 +159,22 @@ class MooWriteCallbacks : public NimBLECharacteristicCallbacks {
     Serial.print("[BLE_RX] ");
     Serial.println((const char*)rxBuffer);
 
+    if (isPosInfoRequest) {
+      Serial.println("[BLE] payout info requested");
+      notifyPosInfo();
+      return;
+    }
+
     char ok[48];
     bleFormatOk(assembledLen, ok, sizeof(ok));
     notifyJson(ok);
 
-    if (strstr((const char*)rxBuffer, "\"t\":\"sp\"") != nullptr) {
-      Serial.println("[BLE_SIGNED_PAYMENT] relaying to backend");
-      if (signedPaymentHandler != nullptr) {
-        signedPaymentHandler((const char*)rxBuffer);
+    if (isSignedPayment) {
+      Serial.println("[BLE_SIGNED_PAYMENT] queueing for main loop");
+      if (!queueSignedPayment((const char*)rxBuffer)) {
+        char err[32];
+        bleFormatErr("queue", err, sizeof(err));
+        notifyJson(err);
       }
     } else if (displayIsReady()) {
       showError("BLE OK");
@@ -167,9 +190,6 @@ void bleTransportInit() {
   snprintf(deviceName, sizeof(deviceName), "Moo-%s", POS_ID);
 
   NimBLEDevice::init(deviceName);
-  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
-  NimBLEDevice::setSecurityPasskey(BLE_DEV_PASSKEY);
-  NimBLEDevice::setSecurityAuth(true, true, true);
 
   server = NimBLEDevice::createServer();
   server->setCallbacks(&serverCallbacks);
@@ -177,7 +197,7 @@ void bleTransportInit() {
   NimBLEService* service = server->createService(MOO_BLE_SERVICE_UUID);
   NimBLECharacteristic* writeChar = service->createCharacteristic(
       MOO_BLE_WRITE_CHAR_UUID,
-      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
+      NIMBLE_PROPERTY::WRITE);
   writeChar->setCallbacks(&writeCallbacks);
 
   notifyChar = service->createCharacteristic(
@@ -207,4 +227,20 @@ void bleTransportOnQrShown() {
 
 void bleTransportSetSignedPaymentHandler(SignedPaymentHandler handler) {
   signedPaymentHandler = handler;
+}
+
+bool bleTransportTakePendingSignedPayment(char* out, size_t outLen) {
+  if (!pendingSignedPaymentReady || out == nullptr || outLen == 0) {
+    return false;
+  }
+  size_t len = strlen(pendingSignedPayment);
+  if (len + 1 > outLen) {
+    Serial.printf("[BLE] pending signed payment does not fit output buffer (%u)\n", (unsigned)len);
+    return false;
+  }
+  memcpy(out, pendingSignedPayment, len + 1);
+  pendingSignedPayment[0] = '\0';
+  pendingSignedPaymentReady = false;
+  Serial.printf("[BLE] dequeued signed payment len=%u\n", (unsigned)len);
+  return true;
 }

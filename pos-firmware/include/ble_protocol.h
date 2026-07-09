@@ -7,7 +7,6 @@
 #define MOO_BLE_WRITE_CHAR_UUID "6d6f6f02-0000-4000-8000-000000000002"
 #define MOO_BLE_NOTIFY_CHAR_UUID "6d6f6f03-0000-4000-8000-000000000003"
 
-#define BLE_DEV_PASSKEY 123456
 #define BLE_TARGET_MTU 247
 #define BLE_DEFAULT_MTU 23
 #define BLE_MAX_MESSAGE_BYTES 4096
@@ -19,6 +18,7 @@ size_t bleChunkPayloadSize(uint16_t mtu);
 void bleFormatChunkAck(uint8_t seq, char* out, size_t outLen);
 void bleFormatOk(size_t len, char* out, size_t outLen);
 void bleFormatErr(const char* code, char* out, size_t outLen);
+void bleFormatPosInfo(const char* posId, const char* payoutAddress, char* out, size_t outLen);
 
 class BleChunkReassembler {
  public:

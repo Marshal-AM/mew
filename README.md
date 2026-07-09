@@ -183,9 +183,9 @@ See [`pos-firmware/README.md`](pos-firmware/README.md) for wiring, build envs, a
 
 ```bash
 cd pos-firmware
-pio run -e esp32-oled          # SSD1306 OLED (default)
-pio run -e esp32-tft           # ILI9341 TFT
-pio run -e esp32-oled -t upload
+pio run -e esp32-s3-oled       # ESP32-S3 + SSD1306 OLED (default)
+pio run -e esp32-oled          # Classic ESP32 + OLED
+pio run -e esp32-s3-oled -t upload
 pio device monitor
 ```
 

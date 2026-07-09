@@ -21,6 +21,17 @@ static Keypad keypad = Keypad(
 
 void keypadInit() {
   keypad.setHoldTime(LONG_PRESS_MS);
+  Serial.print("[KEYPAD] rows GPIO ");
+  for (uint8_t i = 0; i < KEYPAD_ROWS; i++) {
+    Serial.print(KEYPAD_ROW_PINS[i]);
+    if (i + 1 < KEYPAD_ROWS) Serial.print(",");
+  }
+  Serial.print(" | cols GPIO ");
+  for (uint8_t i = 0; i < KEYPAD_COLS; i++) {
+    Serial.print(KEYPAD_COL_PINS[i]);
+    if (i + 1 < KEYPAD_COLS) Serial.print(",");
+  }
+  Serial.println();
 }
 
 KeyEvent keypadPoll() {
@@ -29,6 +40,8 @@ KeyEvent keypadPoll() {
   if (key == NO_KEY) {
     return {KEY_NONE, '\0'};
   }
+
+  Serial.printf("[KEYPAD] pressed '%c'\n", key);
 
   if (key == HOLD) {
     Serial.println("[KEYPAD] long-press 0 (reserved for voice, Phase 16)");

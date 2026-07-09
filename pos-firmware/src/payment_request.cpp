@@ -29,7 +29,7 @@ bool buildPaymentRequest(uint32_t cents, PaymentRequest* out) {
   }
 
   uint8_t reqIdBytes[3];
-  uint8_t posNonceBytes[16];
+  uint8_t posNonceBytes[POS_NONCE_BYTES];
   esp_fill_random(reqIdBytes, sizeof(reqIdBytes));
   esp_fill_random(posNonceBytes, sizeof(posNonceBytes));
 
@@ -41,20 +41,17 @@ bool buildPaymentRequest(uint32_t cents, PaymentRequest* out) {
   char amount[16];
   formatAmount(cents, amount, sizeof(amount));
 
+  // Compact QR payload; the wallet fetches the payout address from the POS
+  // over BLE before signing, so the QR stays small and easy to scan.
   int written = snprintf(
       out->json,
       sizeof(out->json),
-      "{\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":\"%s\",\"%s\":%lu}",
-      FIELD_POS_ID,
+      "%s|%s|%s|%s|%u",
       POS_ID,
-      FIELD_AMT,
       amount,
-      FIELD_REQ_ID,
       out->reqId,
-      FIELD_POS_NONCE,
       out->posNonce,
-      FIELD_EXP,
-      (unsigned long)out->exp);
+      (unsigned)PAYMENT_TTL_SEC);
 
   if (written < 0 || (size_t)written >= sizeof(out->json)) {
     return false;

@@ -5,14 +5,12 @@
 
 #include "config.h"
 
-#define FIELD_POS_ID "posId"
-#define FIELD_AMT "amt"
-#define FIELD_REQ_ID "reqId"
-#define FIELD_POS_NONCE "posNonce"
-#define FIELD_EXP "exp"
+// Compact QR wire format (pipe-delimited): posId|amt|reqId|posNonce|ttlSec|payoutAddress
+// Wallet also accepts legacy JSON with long or short keys.
 
 #define REQ_ID_HEX_LEN 6
-#define POS_NONCE_HEX_LEN 32
+#define POS_NONCE_BYTES 8
+#define POS_NONCE_HEX_LEN (POS_NONCE_BYTES * 2)
 
 typedef struct {
   char json[PAYMENT_JSON_MAX];

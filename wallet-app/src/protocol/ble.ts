@@ -16,7 +16,8 @@ export function bleDeviceNameForPosId(posId: string): string {
 export type NotifyMessage =
   | { t: "ca"; s: number }
   | { t: "ok"; len: number }
-  | { t: "err"; m: string };
+  | { t: "err"; m: string }
+  | { t: "pi"; posId: string; payoutAddress: string };
 
 export function parseNotifyMessage(raw: string): NotifyMessage | null {
   try {

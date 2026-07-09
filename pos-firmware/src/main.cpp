@@ -1,6 +1,7 @@
 #include "config.h"
 #include "display.h"
 #include "keypad_input.h"
+#include "ble_protocol.h"
 #include "ui_state.h"
 #include "ble_transport.h"
 #include "wifi_setup.h"
@@ -9,6 +10,7 @@
 #include <Arduino.h>
 
 static UiContext ui;
+static char pendingSignedPaymentJson[BLE_MAX_MESSAGE_BYTES];
 
 static void onSignedPayment(const char* json) {
   uiOnSignedPayment(&ui, json);
@@ -16,7 +18,13 @@ static void onSignedPayment(const char* json) {
 
 void setup() {
   Serial.begin(115200);
-  delay(500);
+#if defined(BOARD_ESP32_S3)
+  unsigned long serialWait = millis();
+  while (!Serial && (millis() - serialWait) < 4000) {
+    delay(10);
+  }
+#endif
+  delay(300);
 
   Serial.println();
   Serial.println("Moo POS firmware — Phase 7");
@@ -48,6 +56,11 @@ void loop() {
   }
 
   bleTransportLoop();
+
+  if (bleTransportTakePendingSignedPayment(pendingSignedPaymentJson, sizeof(pendingSignedPaymentJson))) {
+    Serial.println("[MAIN] processing queued signed payment");
+    onSignedPayment(pendingSignedPaymentJson);
+  }
 
   KeyEvent event = keypadPoll();
   if (event.type != KEY_NONE) {

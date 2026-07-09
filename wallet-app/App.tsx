@@ -1,4 +1,5 @@
 ﻿import "./src/crypto/setup";
+import "./src/logging/install";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -28,12 +29,13 @@ import { type PendingPayment } from "./src/cache/pendingPayments";
 import { loadPaymentHistory, statusLabel } from "./src/cache/transactionSync";
 import { registerCustomerKyc, isScreeningConfigured } from "./src/lib/screening";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { clearLogs, getLogs, subscribeLogs, type LogEntry } from "./src/logging/appLogs";
 
 const SCREENING_STATUS_KEY = "moo_screening_status_v1";
 const QRCodeGenerator = require("qrcode");
 
 type OnboardingStep = "home" | "create" | "backup" | "import" | "kyc";
-type TabKey = "wallet" | "receive" | "pay" | "history" | "settings";
+type TabKey = "wallet" | "receive" | "pay" | "history" | "settings" | "logs";
 
 type PendingWallet = {
   mnemonic: string;
@@ -393,6 +395,7 @@ function MainTabs() {
         {tab === "pay" ? <PayTab PrimaryButton={PrimaryButton} /> : null}
         {tab === "history" ? <HistoryTab /> : null}
         {tab === "settings" ? <SettingsTab /> : null}
+        {tab === "logs" ? <LogsTab /> : null}
       </View>
       <View style={styles.tabBar}>
         {[
@@ -401,6 +404,7 @@ function MainTabs() {
           ["pay", "Pay"],
           ["history", "History"],
           ["settings", "Settings"],
+          ["logs", "Logs"],
         ].map(([key, label]) => (
           <Pressable key={key} onPress={() => setTab(key as TabKey)} style={styles.tabButton}>
             <Text style={[styles.tabLabel, tab === key && styles.tabLabelActive]}>{label}</Text>
@@ -582,7 +586,7 @@ function HistoryTab() {
 }
 
 function SettingsTab() {
-  const { address, signTestMessage, logout, syncPosRegistry, posRegistrySyncError } = useWallet();
+  const { address, signTestMessage, logout, syncPosRegistry, posRegistrySyncError, approvalStatus } = useWallet();
   const [result, setResult] = useState<{ signature: string; valid: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
   const [posId, setPosId] = useState("POS-001");
@@ -603,15 +607,15 @@ function SettingsTab() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.gapLarge}>
       <View style={styles.card}>
-        <Text style={styles.sectionLabel}>POS registry sync</Text>
+        <Text style={styles.sectionLabel}>POS payout mapping</Text>
         <Text style={styles.body}>
-          Merchants manage POS devices in the dashboard. Sync here while online to cache payout addresses for offline payments.
+          The preferred path is embedding the payout address directly in the POS QR. This registry cache is only a legacy fallback.
         </Text>
         <Text style={styles.monoSmall}>Cached devices: {registryMeta?.deviceCount ?? 0}</Text>
         <Text style={styles.monoSmall}>Last synced: {registryMeta?.lastSyncedAt ?? "never"}</Text>
         {posRegistrySyncError ? <Text style={styles.warningText}>{posRegistrySyncError}</Text> : null}
         <PrimaryButton
-          title={registryLoading ? "Syncing..." : "Sync POS registry"}
+          title={registryLoading ? "Syncing..." : "Sync legacy registry"}
           disabled={registryLoading}
           onPress={async () => {
             setRegistryLoading(true);
@@ -629,8 +633,8 @@ function SettingsTab() {
           }}
         />
         {registryStatus ? <Text style={styles.body}>{registryStatus}</Text> : null}
-        <Text style={[styles.sectionLabel, { marginTop: spacing.md }]}>Dev override (optional)</Text>
-        <Text style={styles.body}>Local override for testnet without dashboard access.</Text>
+        <Text style={[styles.sectionLabel, { marginTop: spacing.md }]}>Manual fallback override</Text>
+        <Text style={styles.body}>Only needed if a POS QR does not carry a payout address yet.</Text>
         <Text style={styles.monoSmall}>posId</Text>
         <TextInput
           value={posId}
@@ -671,6 +675,7 @@ function SettingsTab() {
         <Text style={styles.body}>{CHAIN.name}</Text>
         <Text style={styles.monoSmall}>Chain ID: {CHAIN.chainId}</Text>
         <Text style={styles.monoSmall}>Forwarder: {PAYMENT_FORWARDER}</Text>
+        {approvalStatus ? <Text style={styles.body}>{approvalStatus}</Text> : null}
       </View>
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>Sign test</Text>
@@ -703,6 +708,57 @@ function SettingsTab() {
           await logout();
         }}
       />
+    </ScrollView>
+  );
+}
+
+function LogsTab() {
+  const [items, setItems] = useState<LogEntry[]>(() => getLogs());
+
+  useEffect(() => subscribeLogs(() => setItems(getLogs())), []);
+
+  const text = items
+    .map((item) => `[${item.timestamp}] ${item.level.toUpperCase()} ${item.message}`)
+    .join("\n");
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.gapLarge}>
+      <Text style={styles.title}>Logs</Text>
+      <Text style={styles.body}>
+        App, BLE, wallet, pay-flow, and error logs are captured here. Look for tags like
+        {" "}[Pay], [BLE], [Transfer], [Allowance], [Registry], and [Sign] while testing payments.
+      </Text>
+      <View style={styles.buttonRow}>
+        <SecondaryButton
+          title="Copy Logs"
+          onPress={async () => {
+            await Clipboard.setStringAsync(text || "No logs yet.");
+          }}
+        />
+        <SecondaryButton
+          title="Clear Logs"
+          onPress={async () => {
+            clearLogs();
+          }}
+        />
+      </View>
+      {items.length === 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.body}>No logs yet.</Text>
+        </View>
+      ) : (
+        items
+          .slice()
+          .reverse()
+          .map((item) => (
+            <View key={item.id} style={styles.card}>
+              <Text style={styles.monoSmall}>
+                [{new Date(item.timestamp).toLocaleTimeString()}] {item.level.toUpperCase()}
+              </Text>
+              <Text style={styles.body}>{item.message}</Text>
+            </View>
+          ))
+      )}
     </ScrollView>
   );
 }
@@ -759,6 +815,7 @@ const styles = StyleSheet.create({
   checkbox: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   checkboxChecked: { backgroundColor: colors.accent, borderColor: colors.accent },
   checkmark: { color: colors.text, fontWeight: "700" },
+  buttonRow: { flexDirection: "row", gap: spacing.md, alignItems: "center" },
   button: { minHeight: 50, borderRadius: 12, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.lg, marginBottom: spacing.md },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { color: colors.text, fontSize: 16, fontWeight: "600" },

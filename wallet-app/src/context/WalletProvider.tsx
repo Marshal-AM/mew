@@ -9,6 +9,7 @@ import {
 } from "react";
 import { HDNodeWallet } from "ethers";
 import { fetchAllBalances, type TokenBalance } from "../chain/balances";
+import { ensureTokenAllowance } from "../chain/allowances";
 import * as secureStorage from "../wallet/secureStorage";
 import {
   getWalletFromMnemonic,
@@ -17,8 +18,7 @@ import {
   SIGN_TEST_MESSAGE,
   verifySignature,
 } from "../wallet/walletService";
-import { consumeSigningSession } from "../wallet/authGate";
-import { buildTransferMessage, getForwarderDomain } from "../wallet/eip712";
+import { buildTransferMessage, getForwarderDomain, MOO_TOKEN_ADDRESS } from "../wallet/eip712";
 import type { PaymentRequest } from "../protocol/paymentRequest";
 import {
   buildSignedPaymentPayload,
@@ -28,6 +28,7 @@ import { syncPosRegistryFromServer } from "../cache/posRegistry";
 import { syncTransactionsForWallet } from "../cache/transactionSync";
 import * as Network from "expo-network";
 import { isSupabaseConfigured } from "../lib/supabase";
+import { PAYMENT_FORWARDER } from "../chain/config";
 
 type WalletState = "loading" | "unlocked" | "none";
 
@@ -43,7 +44,6 @@ type WalletContextValue = {
   logout: () => Promise<void>;
   signTestMessage: () => Promise<{ signature: string; valid: boolean }>;
   signPaymentAuthorization: (params: {
-    sessionId: string;
     request: PaymentRequest;
     payoutAddress: string;
   }) => Promise<SignedPaymentPayload>;
@@ -51,6 +51,7 @@ type WalletContextValue = {
   syncTransactions: () => Promise<number>;
   posRegistrySyncError: string | null;
   transactionSyncError: string | null;
+  approvalStatus: string | null;
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -64,6 +65,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [balancesError, setBalancesError] = useState<string | null>(null);
   const [posRegistrySyncError, setPosRegistrySyncError] = useState<string | null>(null);
   const [transactionSyncError, setTransactionSyncError] = useState<string | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<string | null>(null);
 
   const address = wallet?.address ?? null;
 
@@ -153,15 +155,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const signPaymentAuthorization = useCallback(
     async (params: {
-      sessionId: string;
       request: PaymentRequest;
       payoutAddress: string;
     }) => {
       if (!wallet) {
         throw new Error("Wallet not unlocked");
       }
-
-      consumeSigningSession(params.sessionId);
 
       const message = await buildTransferMessage(
         wallet.address,
@@ -174,6 +173,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     },
     [wallet]
   );
+
+  const ensurePaymentApproval = useCallback(async () => {
+    if (!wallet) return;
+    const net = await Network.getNetworkStateAsync();
+    if (!net.isConnected) {
+      setApprovalStatus("Offline - approval check skipped.");
+      return;
+    }
+    try {
+      const result = await ensureTokenAllowance(wallet, MOO_TOKEN_ADDRESS, PAYMENT_FORWARDER, 1n);
+      if (result.approved) {
+        const message = `Approved MOO for forwarder (${result.txHash?.slice(0, 14)}...).`;
+        console.log(`[MooWallet] ${message}`);
+        setApprovalStatus(message);
+      } else {
+        const message = "MOO forwarder approval already present.";
+        console.log(`[MooWallet] ${message}`);
+        setApprovalStatus(message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Approval check failed";
+      console.error("[MooWallet] approval failed", message);
+      setApprovalStatus(`Approval failed: ${message}`);
+    }
+  }, [wallet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,8 +238,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       refreshBalances();
       void syncPosRegistry();
       void syncTransactions();
+      void ensurePaymentApproval();
     }
-  }, [state, wallet, refreshBalances, syncPosRegistry, syncTransactions]);
+  }, [state, wallet, refreshBalances, syncPosRegistry, syncTransactions, ensurePaymentApproval]);
 
   const value = useMemo(
     () => ({
@@ -234,6 +259,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       syncTransactions,
       posRegistrySyncError,
       transactionSyncError,
+      approvalStatus,
     }),
     [
       state,
@@ -251,6 +277,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       syncTransactions,
       posRegistrySyncError,
       transactionSyncError,
+      approvalStatus,
     ]
   );
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 typedef enum {
   RELAY_APPROVED,
   RELAY_DECLINED,

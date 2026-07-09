@@ -1,20 +1,32 @@
 # Moo POS Firmware (Phase 7)
 
-ESP32 POS firmware: keypad price entry, payment-request JSON + QR, NimBLE signed-payment receive, WiFi relay to the backend pipeline, and settlement UI (Pending / Approved / Declined / Held).
+ESP32 / ESP32-S3 POS firmware: keypad price entry, payment-request JSON + QR, NimBLE signed-payment receive, WiFi relay to the backend pipeline, and settlement UI (Pending / Approved / Declined / Held).
 
 See also [`docs/ble-protocol.md`](../docs/ble-protocol.md).
 
 ## Hardware
 
-- **MCU:** ESP32 DevKit (`esp32dev`)
+- **MCU:** ESP32-S3-DevKitC-1 (`esp32-s3-oled`, **default**) or classic ESP32 DevKit (`esp32-oled`)
 - **Keypad:** 4×4 matrix (`0–9`, `#` confirm, `*` clear)
 - **Display:** SSD1306 OLED (128×64 I2C) **or** ILI9341 TFT (240×320 SPI)
 
-Pick the PlatformIO environment that matches your display wiring.
+Pick the PlatformIO environment that matches your board and display wiring.
 
 ## Pin maps
 
-### OLED build (`esp32-oled`)
+### ESP32-S3 OLED build (`esp32-s3-oled`) — default
+
+For **ESP32-S3-DevKitC-1** boards where **GPIO 22 is not on the header**.
+
+| Subsystem | GPIO |
+|-----------|------|
+| Keypad rows | 4, 5, 6, 7 |
+| Keypad cols | 15, 16, 17, 18 |
+| OLED SDA | 8 |
+| OLED SCL | 9 |
+| OLED I2C addr | 0x3C |
+
+### Classic ESP32 OLED build (`esp32-oled`)
 
 | Subsystem | GPIO |
 |-----------|------|
@@ -24,7 +36,19 @@ Pick the PlatformIO environment that matches your display wiring.
 | OLED SCL | 22 |
 | OLED I2C addr | 0x3C |
 
-### TFT build (`esp32-tft`)
+### ESP32-S3 TFT build (`esp32-s3-tft`)
+
+| Subsystem | GPIO |
+|-----------|------|
+| Keypad rows | 4, 5, 6, 7 |
+| Keypad cols | 15, 16, 17, 18 |
+| TFT MOSI | 13 |
+| TFT SCLK | 12 |
+| TFT CS | 10 |
+| TFT DC | 11 |
+| TFT RST | 2 |
+
+### Classic ESP32 TFT build (`esp32-tft`)
 
 | Subsystem | GPIO |
 |-----------|------|
@@ -38,7 +62,34 @@ Pick the PlatformIO environment that matches your display wiring.
 
 Edit [`include/config.h`](include/config.h) if your wiring differs.
 
-**Avoid:** GPIO 6–11 (flash). GPIO 2 is a boot-strapping pin on some boards — if the TFT build boot-loops, move `TFT_DC` to another pin in `platformio.ini` and `config.h`.
+**Avoid on classic ESP32:** GPIO 6–11 (flash). **Avoid on ESP32-S3:** strapping pins 0, 3, 45, 46 for outputs if possible; GPIO 48 is the onboard RGB LED.
+
+## Wiring diagram (ESP32-S3 + OLED)
+
+```
+ESP32-S3 DevKitC-1          SSD1306 OLED (I2C)
+─────────────────         ──────────────────
+3.3V  ─────────────────── VCC
+GND   ─────────────────── GND
+GPIO 8  ───────────────── SDA
+GPIO 9  ───────────────── SCL
+
+ESP32-S3                  4×4 Keypad
+─────────────────
+GPIO 4, 5, 6, 7   ─────── 4 row pins
+GPIO 15,16,17,18  ─────── 4 column pins
+```
+
+Keypad layout expected by firmware:
+
+```
+[ 1 ] [ 2 ] [ 3 ] [ A ]
+[ 4 ] [ 5 ] [ 6 ] [ B ]
+[ 7 ] [ 8 ] [ 9 ] [ C ]
+[ * ] [ 0 ] [ # ] [ D ]
+```
+
+Only `0–9`, `#`, and `*` are used (`A`–`D` are ignored).
 
 ## Build & flash
 
@@ -47,25 +98,28 @@ Requires [PlatformIO](https://platformio.org/).
 ```bash
 cd pos-firmware
 
-# OLED (default)
+# ESP32-S3 + OLED (default)
+pio run -e esp32-s3-oled
+pio run -e esp32-s3-oled -t upload
+
+# Classic ESP32 + OLED
 pio run -e esp32-oled
 pio run -e esp32-oled -t upload
-
-# TFT
-pio run -e esp32-tft
-pio run -e esp32-tft -t upload
 
 # Serial monitor (115200 baud)
 pio device monitor
 ```
 
-On Windows without global PlatformIO, use the project venv:
+On Windows without global PlatformIO:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install platformio
-.\.venv\Scripts\python.exe -m platformio run -e esp32-oled -e esp32-tft
+.\.venv\Scripts\python.exe -m platformio run -e esp32-s3-oled -t upload
+.\.venv\Scripts\python.exe -m platformio device monitor
 ```
+
+**ESP32-S3 USB:** use the **USB** port labeled for programming (native USB/JTAG). If upload fails, hold **BOOT**, press **RST**, release **BOOT**, then upload again.
 
 ## Configuration
 
@@ -90,7 +144,7 @@ Example `platformio.ini` overrides for a live device:
 
 ## Usage
 
-1. Power on — serial shows pin profile and `POS_ID`.
+1. Power on — serial shows pin profile (`esp32-s3-oled`) and `POS_ID`.
 2. Enter amount digit-by-digit (cents accumulator): `5` `0` `0` → `$5.00`.
 3. Press `#` — QR appears; serial logs `[PAYMENT_REQUEST] {...}`.
 4. Scan QR with any phone scanner — JSON should parse cleanly.
@@ -138,7 +192,7 @@ Long-press `0` is detected and logged (reserved for voice in Phase 16); short ta
 ```
 include/     Headers (config, display, keypad, payment, UI, wifi, relay)
 src/         Implementation
-platformio.ini   Dual env: esp32-oled, esp32-tft
+platformio.ini   Envs: esp32-s3-oled (default), esp32-s3-tft, esp32-oled, esp32-tft
 ```
 
 Settlement UI drives **Pending → Approved / Declined / Held** from the synchronous backend pipeline response (Phase 7).

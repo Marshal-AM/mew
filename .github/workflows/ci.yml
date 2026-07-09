@@ -89,5 +89,5 @@ jobs:
           python-version: "3.11"
       - name: Install PlatformIO
         run: pip install platformio
-      - run: pio run -e esp32-oled -e esp32-tft
+      - run: pio run -e esp32-s3-oled -e esp32-s3-tft -e esp32-oled -e esp32-tft
 

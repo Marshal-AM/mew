@@ -68,6 +68,15 @@ void bleFormatErr(const char* code, char* out, size_t outLen) {
   snprintf(out, outLen, "{\"t\":\"err\",\"m\":\"%s\"}", code);
 }
 
+void bleFormatPosInfo(const char* posId, const char* payoutAddress, char* out, size_t outLen) {
+  snprintf(
+      out,
+      outLen,
+      "{\"t\":\"pi\",\"posId\":\"%s\",\"payoutAddress\":\"%s\"}",
+      posId ? posId : "",
+      payoutAddress ? payoutAddress : "");
+}
+
 void BleChunkReassembler::reset() {
   total_ = 0;
   received_ = 0;

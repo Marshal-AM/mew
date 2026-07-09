@@ -117,7 +117,8 @@ void uiHandleKey(UiContext* ctx, KeyEvent event) {
     if (ctx->state == STATE_ENTER_AMOUNT) {
       resetAmount(ctx);
     } else if (
-        ctx->state == STATE_APPROVED || ctx->state == STATE_DECLINED || ctx->state == STATE_HELD) {
+        ctx->state == STATE_SHOW_QR || ctx->state == STATE_APPROVED || ctx->state == STATE_DECLINED ||
+        ctx->state == STATE_HELD) {
       resetAmount(ctx);
     }
     return;

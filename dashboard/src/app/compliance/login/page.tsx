@@ -1,11 +1,12 @@
-import { SignInForm } from "@/components/SignInForm";
+import { SignInForm, ComplianceLoginFooter } from "@/components/SignInForm";
 
 export default function ComplianceLoginPage() {
   return (
     <SignInForm
       title="Compliance Login"
-      description="Sign in with a compliance-officer wallet (COMPLIANCE_OFFICER_WALLETS env)."
+      description="Sign in with an authorized compliance officer wallet to manage reviews, freezes, and fraud rules."
       expectedRole="compliance_officer"
+      footer={<ComplianceLoginFooter />}
     />
   );
 }

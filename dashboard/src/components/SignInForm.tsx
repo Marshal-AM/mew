@@ -1,14 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { BrowserProvider } from "ethers";
 import { buildSiweMessage } from "@/lib/siwe";
 import { fetchSupabaseFunction } from "@/lib/supabase-functions";
 import { saveSession } from "@/lib/session";
 import type { DashboardRole } from "@/lib/session";
+import { isUserRejectedWallet, notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { MooPayLogo } from "@/components/MooPayLogo";
 
 type SignInFormProps = {
   title: string;
@@ -16,7 +19,29 @@ type SignInFormProps = {
   expectedRole?: DashboardRole;
   redirectMerchant?: string;
   redirectCompliance?: string;
+  footer?: React.ReactNode;
 };
+
+function roleGateMessage(expected: DashboardRole, actual: DashboardRole): { title: string; description: string } {
+  if (expected === "compliance_officer" && actual === "merchant") {
+    return {
+      title: "Wallet not on compliance allowlist",
+      description:
+        "Compliance login only works for wallets listed in COMPLIANCE_OFFICER_WALLETS on the Supabase merchant-auth function. Other wallets sign in as merchants — use Merchant Login instead.",
+    };
+  }
+  if (expected === "merchant" && actual === "compliance_officer") {
+    return {
+      title: "Use the compliance login page",
+      description:
+        "This wallet is configured as a compliance officer. Go to Compliance Login to access the compliance console.",
+    };
+  }
+  return {
+    title: "Wrong account type for this login",
+    description: `Expected ${expected}, but this wallet signed in as ${actual}.`,
+  };
+}
 
 export function SignInForm({
   title,
@@ -24,16 +49,25 @@ export function SignInForm({
   expectedRole,
   redirectMerchant = "/merchant",
   redirectCompliance = "/compliance",
+  footer,
 }: SignInFormProps) {
   const router = useRouter();
-  const [status, setStatus] = useState("Connect your wallet to sign in.");
   const [busy, setBusy] = useState(false);
 
   const signIn = async () => {
     setBusy(true);
     try {
       const eth = (window as unknown as { ethereum?: unknown }).ethereum;
-      if (!eth) throw new Error("No Ethereum wallet found. Install MetaMask.");
+      if (!eth) {
+        notify.error("No wallet detected", {
+          description: "Install MetaMask or another Ethereum browser wallet, then try again.",
+        });
+        return;
+      }
+
+      notify.info("Connecting wallet", {
+        description: "Approve the connection request in your wallet extension.",
+      });
 
       const provider = new BrowserProvider(eth as never);
       const signer = await provider.getSigner();
@@ -42,8 +76,15 @@ export function SignInForm({
       const { response: nonceRes, data: nonceJson } = await fetchSupabaseFunction("merchant-auth");
       const nonce = nonceJson.nonce as string | undefined;
       if (!nonceRes.ok || !nonce) {
-        throw new Error((nonceJson.error as string) ?? "Failed to fetch nonce");
+        notify.error("Could not start sign-in", {
+          description: (nonceJson.error as string) ?? `Server returned HTTP ${nonceRes.status}`,
+        });
+        return;
       }
+
+      notify.info("Confirm signature", {
+        description: "Sign the SIWE message in your wallet to finish logging in.",
+      });
 
       const message = buildSiweMessage({
         domain: window.location.host,
@@ -63,12 +104,17 @@ export function SignInForm({
         | { access_token: string; refresh_token: string }
         | undefined;
       if (!authRes.ok || !session) {
-        throw new Error((authJson.error as string) ?? "Authentication failed");
+        notify.error("Authentication failed", {
+          description: (authJson.error as string) ?? `Server returned HTTP ${authRes.status}`,
+        });
+        return;
       }
 
       const role = (authJson.role as DashboardRole | undefined) ?? "merchant";
       if (expectedRole && role !== expectedRole) {
-        throw new Error(`This login is for ${expectedRole} accounts only.`);
+        const gate = roleGateMessage(expectedRole, role);
+        notify.error(gate.title, { description: gate.description });
+        return;
       }
 
       saveSession({
@@ -79,28 +125,83 @@ export function SignInForm({
         role,
       });
 
-      router.push(role === "compliance_officer" ? redirectCompliance : redirectMerchant);
+      const destination = role === "compliance_officer" ? redirectCompliance : redirectMerchant;
+      notify.success("Signed in", {
+        description:
+          role === "compliance_officer"
+            ? "Opening compliance console…"
+            : "Opening merchant dashboard…",
+      });
+      router.replace(destination);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Login failed");
+      if (isUserRejectedWallet(err)) {
+        notify.warning("Signature cancelled", {
+          description: "No changes were made. Tap Connect Wallet when you're ready to try again.",
+        });
+        return;
+      }
+      notify.error("Login failed", {
+        description: err instanceof Error ? err.message : "An unexpected error occurred.",
+      });
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 bg-muted/20">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-          <CardDescription>{description}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">{status}</p>
-          <Button type="button" className="w-full" onClick={() => void signIn()} disabled={busy}>
-            {busy ? "Signing in…" : "Connect Wallet"}
-          </Button>
-        </CardContent>
-      </Card>
-    </main>
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-clip bg-background">
+      <header className="shrink-0 bg-transparent pt-4 md:pt-6">
+        <div className="flex h-[72px] w-full items-center justify-center bg-transparent px-[7.5%]">
+          <MooPayLogo height={40} />
+        </div>
+      </header>
+      <main className="mx-auto flex w-full min-w-0 max-w-[var(--page-max)] flex-1 flex-col justify-center px-[var(--page-gutter)] py-8">
+        <div className="w-full max-w-md mx-auto flex flex-col items-center gap-8 animate-fade-in-up">
+        <p className="text-[13px] text-muted-foreground max-w-sm text-center">{description}</p>
+
+        <Card className="w-full">
+          <CardHeader className="items-center text-center">
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>Polygon Amoy · Sign-In with Ethereum</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button type="button" className="w-full" size="lg" onClick={() => void signIn()} disabled={busy}>
+              {busy ? "Waiting for wallet…" : "Connect Wallet"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        {footer ? <div className="text-center text-[13px] text-muted-foreground">{footer}</div> : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+export function MerchantLoginFooter() {
+  return (
+    <>
+      Compliance officer?{" "}
+      <Link href="/compliance/login" className="font-medium text-primary hover:text-primary-hover">
+        Sign in here
+      </Link>
+      <span className="block mt-2 text-subtle text-[12px]">
+        Merchant login accepts any wallet. Compliance requires an allowlisted wallet.
+      </span>
+    </>
+  );
+}
+
+export function ComplianceLoginFooter() {
+  return (
+    <>
+      Merchant account?{" "}
+      <Link href="/login" className="font-medium text-primary hover:text-primary-hover">
+        Sign in here
+      </Link>
+      <span className="block mt-2 text-subtle text-[12px]">
+        Your wallet must be in COMPLIANCE_OFFICER_WALLETS on the backend.
+      </span>
+    </>
   );
 }

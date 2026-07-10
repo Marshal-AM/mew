@@ -3,19 +3,18 @@
   "compilerOptions": {
     "strict": true,
     "resolveJsonModule": true,
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
+      "@/*": ["./src/*"]
     }
   },
   "include": [
     "App.tsx",
-    "index.js",
+    "app/**/*.ts",
+    "app/**/*.tsx",
     "src/**/*.ts",
-    "src/**/*.tsx"
-  ],
-  "exclude": [
-    "app/**"
+    "src/**/*.tsx",
+    "plugins/**/*.js"
   ]
 }

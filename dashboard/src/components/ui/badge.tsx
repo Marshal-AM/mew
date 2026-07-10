@@ -3,16 +3,16 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors",
+  "inline-flex items-center rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary text-primary-foreground",
-        secondary: "border-transparent bg-secondary text-secondary-foreground",
-        success: "border-transparent bg-green-100 text-green-800",
-        warning: "border-transparent bg-amber-100 text-amber-900",
-        destructive: "border-transparent bg-destructive text-destructive-foreground",
-        outline: "text-foreground",
+        default: "border-transparent bg-primary-soft text-primary",
+        secondary: "border-transparent bg-surface text-muted-foreground",
+        success: "border-success/20 bg-success-soft text-secondary-foreground",
+        warning: "border-warning/30 bg-warning-soft text-foreground",
+        destructive: "border-destructive/20 bg-destructive-soft text-destructive",
+        outline: "border-border text-foreground bg-surface-elevated",
       },
     },
     defaultVariants: { variant: "default" },
@@ -33,6 +33,7 @@ export function statusBadgeVariant(status: string): BadgeProps["variant"] {
       return "success";
     case "pending_review":
     case "held":
+    case "pending":
       return "warning";
     case "declined":
       return "destructive";

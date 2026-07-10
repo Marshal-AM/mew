@@ -6,7 +6,7 @@ export function Input({ className, type, ...props }: React.InputHTMLAttributes<H
     <input
       type={type}
       className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-11 w-full rounded-xl border border-border bg-input px-4 py-2 text-[13px] text-foreground transition-colors placeholder:text-muted focus-visible:outline-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}
@@ -15,5 +15,13 @@ export function Input({ className, type, ...props }: React.InputHTMLAttributes<H
 }
 
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
-  return <label className={cn("text-sm font-medium leading-none", className)} {...props} />;
+  return (
+    <label
+      className={cn(
+        "text-[11px] font-bold uppercase tracking-wider text-subtle leading-none",
+        className,
+      )}
+      {...props}
+    />
+  );
 }

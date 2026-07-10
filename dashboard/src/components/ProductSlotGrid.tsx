@@ -19,17 +19,19 @@ export function ProductSlotGrid({ products, className }: ProductSlotGridProps) {
   });
 
   return (
-    <div className={cn("grid grid-cols-3 gap-2 max-w-sm", className)}>
+    <div className={cn("grid grid-cols-3 gap-3 max-w-sm mx-auto", className)}>
       {slots.map(({ slot, name }) => (
         <div
           key={slot}
           className={cn(
-            "rounded-md border p-3 text-center min-h-[72px] flex flex-col justify-center",
-            name ? "bg-primary/5 border-primary/30" : "bg-muted/40 text-muted-foreground",
+            "rounded-xl border p-3 text-center min-h-[80px] flex flex-col justify-center transition-spring",
+            name
+              ? "bg-primary-soft border-primary/30 hover:border-primary/50"
+              : "bg-surface border-border text-muted",
           )}
         >
-          <span className="text-xs font-mono text-muted-foreground">Key {slot}</span>
-          <span className="text-sm font-medium truncate">{name ?? "empty"}</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-subtle">Key {slot}</span>
+          <span className="text-[13px] font-semibold text-navy truncate mt-1">{name ?? "empty"}</span>
         </div>
       ))}
     </div>

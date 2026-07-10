@@ -4,8 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import { DEMO_MERCHANT_ID } from "@/lib/demo-merchant";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
 import { ProductSlotGrid } from "@/components/ProductSlotGrid";
+import { PageHeader } from "@/components/PageHeader";
+import { notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/input";
 import {
   Select,
@@ -47,6 +56,7 @@ export default function MerchantProductsPage() {
   const [form, setForm] = useState(emptyForm);
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   const load = useCallback(async () => {
     const supabase = getAuthenticatedClient();
@@ -57,7 +67,8 @@ export default function MerchantProductsPage() {
       .eq("merchant_id", DEMO_MERCHANT_ID)
       .order("pos_slot", { ascending: true, nullsFirst: false });
     if (error) {
-      setStatus(error.message);
+      notify.error("Could not load products", { description: error.message });
+      setStatus("");
       return;
     }
     setProducts((data as Product[]) ?? []);
@@ -70,6 +81,11 @@ export default function MerchantProductsPage() {
 
   const resetForm = () => setForm(emptyForm);
 
+  const openAddDialog = () => {
+    resetForm();
+    setDialogOpen(true);
+  };
+
   const editProduct = (p: Product) => {
     setForm({
       id: p.id,
@@ -79,6 +95,7 @@ export default function MerchantProductsPage() {
       pos_slot: p.pos_slot != null ? String(p.pos_slot) : "",
       active: p.active,
     });
+    setDialogOpen(true);
   };
 
   const validate = (): string | null => {
@@ -99,7 +116,7 @@ export default function MerchantProductsPage() {
     e.preventDefault();
     const err = validate();
     if (err) {
-      setStatus(err);
+      notify.warning("Validation failed", { description: err });
       return;
     }
     const supabase = getAuthenticatedClient();
@@ -118,10 +135,13 @@ export default function MerchantProductsPage() {
     const { error } = await supabase.from("products").upsert(row);
     setSaving(false);
     if (error) {
-      setStatus(error.message);
+      notify.error("Could not save product", { description: error.message });
       return;
     }
-    setStatus("Saved. POS picks up changes on next catalog sync / reboot.");
+    notify.success("Product saved", {
+      description: "POS picks up changes on next catalog sync / reboot.",
+    });
+    setDialogOpen(false);
     resetForm();
     await load();
   };
@@ -130,37 +150,53 @@ export default function MerchantProductsPage() {
     const supabase = getAuthenticatedClient();
     if (!supabase) return;
     const { error } = await supabase.from("products").update({ active: false }).eq("id", id);
-    if (error) setStatus(error.message);
-    else await load();
+    if (error) notify.error("Could not deactivate product", { description: error.message });
+    else {
+      notify.success("Product deactivated");
+      await load();
+    }
   };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">POS Product Catalog</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Keys 1–9 on POS-001 map to <code className="text-xs">pos_slot</code>. Wallet / QR unchanged.
-          POS syncs on boot (~30s retry).
-        </p>
-        {status ? <p className="text-sm mt-2">{status}</p> : null}
-      </div>
+      <PageHeader
+        title="POS Product Catalog"
+        description="Keys 1–9 on POS-001 map to pos_slot. POS syncs catalog on boot (~30s retry)."
+        status={status || undefined}
+        actions={
+          <Button type="button" onClick={openAddDialog}>
+            Add product
+          </Button>
+        }
+      />
 
       <Card>
         <CardHeader>
           <CardTitle>Keypad slot map</CardTitle>
           <CardDescription>What cashiers see when pressing 1–9</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex justify-center">
           <ProductSlotGrid products={products} />
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{form.id ? "Edit product" : "Add product"}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={save} className="grid gap-4 md:grid-cols-2 max-w-2xl">
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) resetForm();
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{form.id ? "Edit product" : "Add product"}</DialogTitle>
+            <DialogDescription>
+              {form.id
+                ? "Update catalog entry and POS key assignment."
+                : "Create a new product for the POS catalog."}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={save} className="grid gap-5 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="name">Name *</Label>
               <Input
@@ -209,29 +245,32 @@ export default function MerchantProductsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2 flex items-end gap-2 md:col-span-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.active}
-                  onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
-                />
+            <div className="flex items-center gap-2 md:col-span-2">
+              <input
+                type="checkbox"
+                id="active"
+                className="rounded border-border text-primary focus:ring-primary"
+                checked={form.active}
+                onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
+              />
+              <Label
+                htmlFor="active"
+                className="normal-case tracking-normal font-medium text-[13px] text-foreground"
+              >
                 Active on POS
-              </label>
+              </Label>
             </div>
             <div className="flex gap-2 md:col-span-2">
               <Button type="submit" disabled={saving}>
                 {saving ? "Saving…" : "Save product"}
               </Button>
-              {form.id ? (
-                <Button type="button" variant="outline" onClick={resetForm}>
-                  Cancel edit
-                </Button>
-              ) : null}
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancel
+              </Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
@@ -253,9 +292,9 @@ export default function MerchantProductsPage() {
               {products.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell>{p.pos_slot ?? "—"}</TableCell>
-                  <TableCell>{p.name}</TableCell>
+                  <TableCell className="font-medium">{p.name}</TableCell>
                   <TableCell>{p.sku ?? "—"}</TableCell>
-                  <TableCell>{Number(p.price).toFixed(2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{Number(p.price).toFixed(2)}</TableCell>
                   <TableCell>
                     <Badge variant={p.active ? "success" : "secondary"}>
                       {p.active ? "yes" : "no"}
@@ -266,7 +305,12 @@ export default function MerchantProductsPage() {
                       Edit
                     </Button>
                     {p.active ? (
-                      <Button type="button" size="sm" variant="destructive" onClick={() => void deactivate(p.id)}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => void deactivate(p.id)}
+                      >
                         Deactivate
                       </Button>
                     ) : null}

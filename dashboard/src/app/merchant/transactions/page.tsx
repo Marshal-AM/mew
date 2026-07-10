@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DEMO_MERCHANT_ID } from "@/lib/demo-merchant";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
+import { PageHeader } from "@/components/PageHeader";
+import { notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +41,8 @@ export default function MerchantTransactionsPage() {
       p_offset: 0,
     });
     if (error) {
-      setStatus(error.message);
+      notify.error("Could not load transactions", { description: error.message });
+      setStatus("");
       return;
     }
     setRows((data as TxRow[]) ?? []);
@@ -100,20 +103,21 @@ export default function MerchantTransactionsPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Transactions</h1>
-          <p className="text-sm text-muted-foreground">{status}</p>
-        </div>
-        <Button variant="outline" onClick={downloadCsv}>
-          Export CSV
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Transactions"
+        description="Live feed of confirmed and pending payments. Updates in real time when new transactions arrive."
+        status={status}
+        actions={
+          <Button variant="outline" onClick={downloadCsv}>
+            Export CSV
+          </Button>
+        }
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle>Live feed</CardTitle>
+          <CardTitle>All transactions</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -132,7 +136,7 @@ export default function MerchantTransactionsPage() {
               {rows.map((tx) => (
                 <TableRow key={tx.id}>
                   <TableCell>{new Date(tx.created_at).toLocaleString()}</TableCell>
-                  <TableCell>{Number(tx.amount).toFixed(2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{Number(tx.amount).toFixed(2)}</TableCell>
                   <TableCell>{tx.product_name ?? "—"}</TableCell>
                   <TableCell>
                     <Badge variant={statusBadgeVariant(tx.status)}>{tx.status}</Badge>
@@ -145,7 +149,7 @@ export default function MerchantTransactionsPage() {
                         href={`https://amoy.polygonscan.com/tx/${tx.tx_hash}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="underline"
+                        className="text-primary hover:text-primary-hover underline-offset-2 hover:underline"
                       >
                         {tx.tx_hash.slice(0, 10)}…
                       </a>

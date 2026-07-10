@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ArrowRightLeft, Package } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -11,9 +12,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { DEMO_MERCHANT_WALLET } from "@/lib/demo-merchant";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { chartColors } from "@/lib/theme";
+import { notify } from "@/lib/notify";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/StatCard";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 import {
   Table,
@@ -50,7 +55,9 @@ export default function MerchantOverviewPage() {
     ]);
 
     if (txRes.error || revRes.error) {
-      setStatus(txRes.error?.message ?? revRes.error?.message ?? "Load failed");
+      const message = txRes.error?.message ?? revRes.error?.message ?? "Load failed";
+      notify.error("Could not load overview", { description: message });
+      setStatus("");
       return;
     }
 
@@ -73,38 +80,32 @@ export default function MerchantOverviewPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Overview</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Demo merchant analytics — {DEMO_MERCHANT_WALLET}
-        </p>
-        {status ? <p className="text-sm text-amber-700 mt-2">{status}</p> : null}
-      </div>
+      <PageHeader
+        title="Overview"
+        description="Demo merchant analytics and recent activity."
+        status={status || undefined}
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
+        <StatCard label="30-day revenue (MOO)" value={totalRevenue.toFixed(2)} />
+        <StatCard label="Confirmed transactions (30d)" value={totalTx} />
+        <Card className="transition-spring hover:border-primary/30">
           <CardHeader className="pb-2">
-            <CardDescription>30-day revenue (MOO)</CardDescription>
-            <CardTitle className="text-3xl">{totalRevenue.toFixed(2)}</CardTitle>
+            <CardTitle className="text-base font-medium text-muted-foreground">Quick links</CardTitle>
           </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Confirmed transactions (30d)</CardDescription>
-            <CardTitle className="text-3xl">{totalTx}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Quick links</CardDescription>
-          </CardHeader>
-          <CardContent className="text-sm space-y-1">
-            <Link href="/merchant/products" className="text-primary underline block">
-              Manage POS products
-            </Link>
-            <Link href="/merchant/transactions" className="text-primary underline block">
-              All transactions
-            </Link>
+          <CardContent className="space-y-2">
+            <Button asChild variant="outline" size="sm" className="w-full justify-start">
+              <Link href="/merchant/products">
+                <Package className="h-4 w-4" />
+                Manage POS products
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="w-full justify-start">
+              <Link href="/merchant/transactions">
+                <ArrowRightLeft className="h-4 w-4" />
+                All transactions
+              </Link>
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -113,14 +114,26 @@ export default function MerchantOverviewPage() {
         <CardHeader>
           <CardTitle>Revenue (30 days)</CardTitle>
         </CardHeader>
-        <CardContent className="h-64">
+        <CardContent className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={revenue}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Area type="monotone" dataKey="revenue" stroke="#0f172a" fill="#94a3b8" fillOpacity={0.4} />
+              <CartesianGrid stroke={chartColors.border} strokeDasharray="3 3" />
+              <XAxis dataKey="day" tick={{ fontSize: 11, fill: chartColors.muted }} />
+              <YAxis tick={{ fontSize: 11, fill: chartColors.muted }} />
+              <Tooltip
+                contentStyle={{
+                  borderRadius: 12,
+                  border: `1px solid ${chartColors.border}`,
+                  fontSize: 13,
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="revenue"
+                stroke={chartColors.primary}
+                fill={chartColors.primarySoft}
+                fillOpacity={0.8}
+              />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>
@@ -145,7 +158,7 @@ export default function MerchantOverviewPage() {
               {txs.map((tx) => (
                 <TableRow key={tx.id}>
                   <TableCell>{new Date(tx.created_at).toLocaleString()}</TableCell>
-                  <TableCell>{Number(tx.amount).toFixed(2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{Number(tx.amount).toFixed(2)}</TableCell>
                   <TableCell>{tx.product_name ?? "—"}</TableCell>
                   <TableCell>
                     <Badge variant={statusBadgeVariant(tx.status)}>{tx.status}</Badge>

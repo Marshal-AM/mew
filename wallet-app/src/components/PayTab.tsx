@@ -1,27 +1,27 @@
 ﻿import React, { useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { StyleSheet, Text, TextInput, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Network from "expo-network";
 import { Device } from "react-native-ble-plx";
 import { formatUnits, parseUnits } from "ethers";
-import { colors, spacing } from "../theme";
-import { parsePaymentRequestJson, PaymentRequest } from "../protocol/paymentRequest";
-import { serializeSignedPayment } from "../protocol/signedPayment";
-import { requestBlePermissions, scanForPosDevice, waitForPoweredOn } from "../ble/BleManager";
-import { requestPosInfo, sendSignedPayment, TransferProgress } from "../ble/transfer";
-import { fetchPosDevice, getPayoutAddress, truncateAddress } from "../cache/posRegistry";
-import { addPendingPayment, listPendingPayments, updatePendingStatus } from "../cache/pendingPayments";
-import { MOO_DECIMALS, MOO_TOKEN_ADDRESS } from "../wallet/eip712";
-import { getTokenAllowance } from "../chain/allowances";
-import { PAYMENT_FORWARDER } from "../chain/config";
-import { useWallet } from "../context/WalletProvider";
-import { payFlowLog } from "../logging/payFlow";
+import Button from "@/components/Button";
+import Card from "@/components/Card";
+import ScreenContainer from "@/components/ScreenContainer";
+import { colors, spacing, radii, typography } from "@/theme";
+import { getTextInputStyle } from "@/components/Input";
+import { parsePaymentRequestJson, PaymentRequest } from "@/protocol/paymentRequest";
+import { serializeSignedPayment } from "@/protocol/signedPayment";
+import { requestBlePermissions, scanForPosDevice, waitForPoweredOn } from "@/ble/BleManager";
+import { requestPosInfo, sendSignedPayment, TransferProgress } from "@/ble/transfer";
+import { fetchPosDevice, getPayoutAddress, truncateAddress } from "@/cache/posRegistry";
+import { addPendingPayment, listPendingPayments, updatePendingStatus } from "@/cache/pendingPayments";
+import { MOO_DECIMALS, MOO_TOKEN_ADDRESS } from "@/wallet/eip712";
+import { getTokenAllowance } from "@/chain/allowances";
+import { PAYMENT_FORWARDER } from "@/chain/config";
+import { useWallet } from "@/context/WalletProvider";
+import { payFlowLog } from "@/logging/payFlow";
 
-type PayTabProps = {
-  PrimaryButton: React.ComponentType<{ title: string; onPress: () => void | Promise<void>; disabled?: boolean }>;
-};
-
-export function PayTab({ PrimaryButton }: PayTabProps) {
+export default function PayTab() {
   const { state, address, signPaymentAuthorization, syncTransactions } = useWallet();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
@@ -364,19 +364,19 @@ export function PayTab({ PrimaryButton }: PayTabProps) {
 
   if (state !== "unlocked") {
     return (
-      <View style={[styles.screen, styles.centered]}>
+      <ScreenContainer contentStyle={styles.centered}>
         <Text style={styles.title}>Pay</Text>
         <Text style={styles.body}>Unlock your wallet to authorize payments.</Text>
-      </View>
+      </ScreenContainer>
     );
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.gapLarge}>
+    <ScreenContainer scroll contentStyle={styles.content}>
       <Text style={styles.title}>Pay</Text>
       <Text style={styles.body}>
-        Scan the POS QR, confirm amount and payee, then tap pay. Status stays
-        pending until on-chain settlement (Phase 7).
+        Scan the POS QR, confirm amount and payee, then tap pay. Status stays pending until
+        on-chain settlement.
       </Text>
 
       {permission?.granted ? (
@@ -389,32 +389,34 @@ export function PayTab({ PrimaryButton }: PayTabProps) {
           />
         </View>
       ) : (
-        <PrimaryButton title="Grant Camera Permission" onPress={() => void requestPermission()} />
+        <Button title="Grant Camera Permission" onPress={() => void requestPermission()} />
       )}
 
-      <View style={styles.card}>
-        <Text style={styles.sectionLabel}>Manual posId</Text>
+      <Card title="Manual posId">
         <TextInput
           value={manualPosId}
           onChangeText={setManualPosId}
-          style={styles.input}
+          style={[getTextInputStyle(false), styles.inputSpacing]}
           autoCapitalize="characters"
+          placeholderTextColor={colors.textMuted}
         />
-        <PrimaryButton
+        <Button
           title={busy ? "Connecting..." : "Connect BLE"}
           disabled={busy || manualPosId.trim().length === 0}
           onPress={async () => {
             await connectToPos(manualPosId.trim());
           }}
         />
-      </View>
+      </Card>
 
       {paymentRequest ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Confirm payment</Text>
+        <Card title="Confirm payment">
           <Text style={styles.amount}>{paymentRequest.amt} MOO</Text>
           {payoutAddress ? (
-            <Text style={styles.monoSmall}>Payee: {truncateAddress(payoutAddress)}{payoutSource ? ` (${payoutSource})` : ""}</Text>
+            <Text style={styles.monoSmall}>
+              Payee: {truncateAddress(payoutAddress)}
+              {payoutSource ? ` (${payoutSource})` : ""}
+            </Text>
           ) : (
             <Text style={styles.warningText}>{payoutError ?? "Loading payee..."}</Text>
           )}
@@ -423,7 +425,7 @@ export function PayTab({ PrimaryButton }: PayTabProps) {
           <Text style={styles.monoSmall}>posNonce: {paymentRequest.posNonce}</Text>
           <Text style={styles.monoSmall}>expires: {paymentRequest.exp}</Text>
           {allowanceMessage ? <Text style={styles.warningText}>{allowanceMessage}</Text> : null}
-        </View>
+        </Card>
       ) : null}
 
       <Text style={styles.body}>{status}</Text>
@@ -431,15 +433,15 @@ export function PayTab({ PrimaryButton }: PayTabProps) {
       {progress ? (
         <Text style={styles.body}>
           {progress.phase} {progress.sentChunks}/{progress.totalChunks}
-          {progress.message ? ` â€” ${progress.message}` : ""}
+          {progress.message ? ` — ${progress.message}` : ""}
         </Text>
       ) : null}
       {pendingId ? (
-        <View style={styles.pendingCard}>
+        <Card style={styles.pendingCard}>
           <Text style={styles.pendingTitle}>Pending</Text>
           <Text style={styles.monoSmall}>id: {pendingId}</Text>
           <Text style={styles.body}>Awaiting merchant relay. Status syncs when online.</Text>
-        </View>
+        </Card>
       ) : null}
 
       {!canPay && paymentRequest ? (
@@ -449,54 +451,39 @@ export function PayTab({ PrimaryButton }: PayTabProps) {
         </Text>
       ) : null}
 
-      <PrimaryButton
+      <Button
         title={busy ? "Authorizing..." : "Confirm & Pay"}
         disabled={!canPay}
         onPress={handleConfirmPay}
       />
-    </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
-  centered: { alignItems: "center", justifyContent: "center" },
-  gapLarge: { gap: spacing.lg, paddingBottom: spacing.xl },
-  title: { fontSize: 22, fontWeight: "600", color: colors.text },
-  body: { fontSize: 15, lineHeight: 22, color: colors.textMuted },
-  sectionLabel: { color: colors.text, fontWeight: "600", marginBottom: spacing.sm, fontSize: 16 },
+  centered: { alignItems: "center", justifyContent: "center", flex: 1 },
+  content: {
+    gap: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  title: { ...typography.h2, color: colors.text },
+  body: { ...typography.body, color: colors.textSecondary },
   amount: { fontSize: 28, fontWeight: "700", color: colors.text, marginBottom: spacing.sm },
-  warningText: { color: colors.warning, fontSize: 14, lineHeight: 20 },
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: spacing.lg,
-    gap: spacing.sm,
-  },
-  pendingCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.warning,
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: spacing.lg,
-    gap: spacing.sm,
-  },
-  pendingTitle: { color: colors.warning, fontWeight: "700", fontSize: 16 },
-  input: {
-    minHeight: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceElevated,
-    color: colors.text,
-    paddingHorizontal: spacing.md,
+  warningText: { ...typography.caption, color: colors.warning, lineHeight: 20 },
+  pendingCard: { borderColor: colors.warning },
+  pendingTitle: { ...typography.captionMedium, color: colors.warning, marginBottom: spacing.xs },
+  inputSpacing: {
     marginBottom: spacing.sm,
   },
-  monoSmall: { color: colors.textMuted, fontFamily: "monospace", fontSize: 12, lineHeight: 18 },
+  monoSmall: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontFamily: "monospace",
+    lineHeight: 18,
+  },
   cameraWrap: {
-    borderRadius: 16,
+    borderRadius: radii.lg,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: colors.border,

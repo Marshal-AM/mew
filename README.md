@@ -210,6 +210,8 @@ npm run build
 
 See [`pos-firmware/README.md`](pos-firmware/README.md) for wiring, build envs, and hardware test steps.
 
+**Phase 16 (I2S audio):** INMP441 + MAX98357A on ESP32-S3 GPIO 1/2/3 (mic) and 10/11/12 (speaker). Serial `L` runs a 2 s loopback test after flash.
+
 ```bash
 cd pos-firmware
 pio run -e esp32-s3-oled       # ESP32-S3 + SSD1306 OLED (default)

@@ -47,6 +47,23 @@ static const uint8_t KEYPAD_COLS = 4;
 #define OLED_SDA_PIN 8
 #define OLED_SCL_PIN 9
 
+#if defined(AUDIO_ENABLE)
+#define AUDIO_SAMPLE_RATE_HZ 16000
+// Avoid GPIO 3 (ESP32-S3 strapping pin) — use 13/14/21 instead of 1/2/3.
+#define I2S_MIC_BCLK_PIN 13
+#define I2S_MIC_WS_PIN 14
+#define I2S_MIC_SD_PIN 21
+#define I2S_SPK_BCLK_PIN 10
+#define I2S_SPK_WS_PIN 11
+#define I2S_SPK_DIN_PIN 12
+#define AUDIO_LOOPBACK_DEFAULT_SEC 2
+#define AUDIO_LOOPBACK_CHUNK_SAMPLES 512
+#define AUDIO_MIC_SIGNAL_PEAK_THRESHOLD 400
+#define AUDIO_MIC_STATUS_LOG_INTERVAL_MS 5000
+// INMP441 on this board delivers audio on the I2S RIGHT slot (deep_diag verified).
+#define AUDIO_MIC_PCM_SHIFT 14
+#endif
+
 #elif defined(DISPLAY_OLED)
 
 // Classic ESP32 DevKit

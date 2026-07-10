@@ -162,7 +162,67 @@ Example `platformio.ini` overrides for a live device:
 - `posNonce` — 32 hex chars, POS-side replay anchor (Phase 7 backend checks this)
 - `exp` — Unix expiry from NTP (`pool.ntp.org`) with boot-epoch fallback
 
-Long-press `0` is detected and logged (reserved for voice in Phase 16); short tap enters `0`.
+Long-press `0` is detected and logged (reserved for voice capture in Phase 17); short tap enters `0`.
+
+## Phase 16 — I2S mic + speaker (ESP32-S3)
+
+Record/playback loopback at **16 kHz mono** using **INMP441** (mic) and **MAX98357A** (amp). Enabled on `esp32-s3-oled` via `AUDIO_ENABLE=1`.
+
+### Components
+
+| Part | Role |
+|------|------|
+| INMP441 | I2S MEMS microphone (3.3 V) |
+| MAX98357A | I2S Class-D amplifier (3.3 V) |
+| 4Ω or 8Ω speaker | 2–3 W recommended |
+
+### Wiring (ESP32-S3-DevKitC-1)
+
+**Power:** both modules `VDD/VIN → 3.3V`, `GND → GND` (shared with ESP32, OLED, keypad).
+
+**INMP441 (I2S_NUM_0 RX)**
+
+| INMP441 | ESP32-S3 |
+|---------|----------|
+| VDD | 3.3 V |
+| GND | GND |
+| SCK (BCLK) | **GPIO 13** |
+| WS (LRCK) | **GPIO 14** |
+| SD (data) | **GPIO 21** |
+| L/R | **GND** (left channel) |
+| SEL | GND or NC |
+
+**MAX98357A (I2S_NUM_1 TX)**
+
+| MAX98357A | ESP32-S3 |
+|-----------|----------|
+| VIN | 3.3 V |
+| GND | GND |
+| BCLK | **GPIO 10** |
+| LRC (WS) | **GPIO 11** |
+| DIN | **GPIO 12** |
+| SD (shutdown) | **3.3 V** (must be HIGH — amp muted if low) |
+| GAIN | NC (default) |
+| + / − | Speaker |
+
+**Do not use:** GPIO 4–9, 15–18 (keypad + OLED).
+
+### Loopback test
+
+1. Wire hardware per table above.
+2. Flash `esp32-s3-oled` and open serial monitor (115200).
+3. Boot should show `[AUDIO] mic+speaker init OK`.
+4. Type **`L`** → records 2 s, plays back → `[AUDIO] loopback OK`.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `raw32=[0,0]` everywhere | Mic not sending data — check 3.3V power, SD→GPIO21, SCK→GPIO13, WS→GPIO14; **do not use GPIO 3** (S3 strapping) |
+| No playback | Tie MAX98357A **SD** to 3.3 V |
+| Silent mic | Tie INMP441 **L/R** to GND |
+| Garbled audio | Firmware uses `sample >> 14` for INMP441 (not `>> 16`) |
+| Buzz / noise | Short wires, common GND |
 
 ## BLE (Phase 4)
 
@@ -192,8 +252,8 @@ Long-press `0` is detected and logged (reserved for voice in Phase 16); short ta
 ## Project layout
 
 ```
-include/     Headers (config, display, keypad, payment, UI, wifi, relay)
-src/         Implementation
+include/     Headers (config, display, keypad, payment, UI, wifi, relay, audio)
+src/         Implementation (+ audio_i2s.cpp for Phase 16)
 platformio.ini   Envs: esp32-s3-oled (default), esp32-s3-tft, esp32-oled, esp32-tft
 ```
 

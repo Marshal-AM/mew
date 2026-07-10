@@ -22,6 +22,7 @@ wallet-app/.expo/
 wallet-app/dist/
 wallet-app/web-build/
 wallet-app/logs/
+wallet-app/ios/
 
 # Android native build outputs (wallet-app/android/.gitignore covers most)
 wallet-app/android/.gradle/
@@ -54,3 +55,5 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 agentest/
+
+ui-ref/

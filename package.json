@@ -5,7 +5,6 @@
   "description": "Offline BLE → Polygon POS payment system",
   "workspaces": [
     "contracts",
-    "wallet-app",
     "backend",
     "dashboard"
   ],
@@ -18,9 +17,6 @@
     "node": ">=18"
   },
   "overrides": {
-    "wallet-app": {
-      "react": "18.3.1"
-    },
     "react-native-ble-plx": {
       "expo": "$expo",
       "@expo/config-plugins": "$@expo/config-plugins"

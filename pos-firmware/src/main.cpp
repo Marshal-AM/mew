@@ -35,23 +35,33 @@ void setup() {
   Serial.print("POS ID: ");
   Serial.println(POS_ID);
 
-  timeInitNtp();
-  wifiSetupInit();
-  productCatalogInit();
-  keypadInit();
-  bleTransportInit();
-  bleTransportSetSignedPaymentHandler(onSignedPayment);
-
   if (!displayInit()) {
     Serial.println("[FATAL] display init failed");
   } else {
+    showBootStatusScreen("Starting…");
+  }
+
+  timeInitNtp();
+  if (displayIsReady()) {
+    showBootStatusScreen("WiFi…");
+  }
+  wifiSetupInit();
+  productCatalogInit();
+  keypadInit();
+  if (displayIsReady()) {
+    showBootStatusScreen("BLE…");
+  }
+  bleTransportInit();
+  bleTransportSetSignedPaymentHandler(onSignedPayment);
+
+  if (displayIsReady()) {
     uiInit(&ui);
     Serial.println("Ready. Select product (1-9), enter amount, press # to show QR.");
   }
 
 #if defined(AUDIO_ENABLE)
   if (audioInit()) {
-    Serial.println("Audio ready. Serial: P=deep diag D=scan M=mic L=loopback");
+    Serial.println("Audio ready. Keypad A=record B=play C=speaker test. Serial: P/D/M/L/S");
   } else {
     Serial.println("[AUDIO] init failed — check I2S wiring");
   }
@@ -75,6 +85,8 @@ void loop() {
       audioDetectHardware();
     } else if (cmd == 'P' || cmd == 'p') {
       audioDeepDiag();
+    } else if (cmd == 'S' || cmd == 's') {
+      audioSpeakerDiag();
     }
   }
 #endif
@@ -98,7 +110,24 @@ void loop() {
   }
 
   KeyEvent event = keypadPoll();
-  if (event.type != KEY_NONE) {
+  if (event.type == KEY_LONG_ZERO) {
+#if defined(AUDIO_ENABLE)
+    Serial.println("[AUDIO] long-press 0 → 2s loopback test");
+    audioLoopbackTest(AUDIO_LOOPBACK_DEFAULT_SEC);
+#endif
+  } else if (event.type == KEY_ACTION_A) {
+#if defined(AUDIO_ENABLE)
+    audioVoiceStartRecord();
+#endif
+  } else if (event.type == KEY_ACTION_B) {
+#if defined(AUDIO_ENABLE)
+    audioVoicePlayRecorded();
+#endif
+  } else if (event.type == KEY_ACTION_C) {
+#if defined(AUDIO_ENABLE)
+    audioSpeakerDiag();
+#endif
+  } else if (event.type != KEY_NONE) {
     uiHandleKey(&ui, event);
   }
 

@@ -1,6 +1,7 @@
 #include "audio_i2s.h"
 
 #include "config.h"
+#include "display.h"
 
 #include <Arduino.h>
 
@@ -8,13 +9,26 @@
 
 #include <driver/i2s.h>
 #include <driver/gpio.h>
+#include <esp_heap_caps.h>
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <Wire.h>
 
 static bool audio_ready = false;
 static bool mic_i2s_installed = false;
+static bool speaker_i2s_installed = false;
+
+#if defined(AUDIO_ENABLE)
+static int16_t* voice_buffer = nullptr;
+static size_t voice_recorded_samples = 0;
+static bool voice_recording = false;
+static bool voice_playing = false;
+static uint32_t voice_record_peak = 0;
+static unsigned long voice_record_started_ms = 0;
+static unsigned long voice_last_log_ms = 0;
+#endif
 
 static i2s_channel_t micClkChannels(i2s_channel_fmt_t channel_fmt) {
   if (channel_fmt == I2S_CHANNEL_FMT_RIGHT_LEFT) {
@@ -95,7 +109,17 @@ static bool reinstallMicRx() {
   return installMicRx();
 }
 
+static void uninstallSpeakerSafe() {
+  if (!speaker_i2s_installed) {
+    return;
+  }
+  i2s_driver_uninstall(I2S_NUM_1);
+  speaker_i2s_installed = false;
+}
+
 static bool installSpeakerTx() {
+  uninstallSpeakerSafe();
+
   i2s_config_t cfg = {};
   cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
   cfg.sample_rate = AUDIO_SAMPLE_RATE_HZ;
@@ -125,11 +149,13 @@ static bool installSpeakerTx() {
   err = i2s_set_pin(I2S_NUM_1, &pins);
   if (err != ESP_OK) {
     Serial.printf("[AUDIO] speaker set_pin failed: %d\n", (int)err);
+    i2s_driver_uninstall(I2S_NUM_1);
     return false;
   }
 
   i2s_zero_dma_buffer(I2S_NUM_1);
   i2s_set_clk(I2S_NUM_1, AUDIO_SAMPLE_RATE_HZ, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+  speaker_i2s_installed = true;
   return true;
 }
 
@@ -708,6 +734,192 @@ void audioDeepDiag() {
   Serial.println();
 }
 
+static void logSpeakerWiringMap() {
+  Serial.println("[SPK] --- expected MAX98357A wiring ---");
+  Serial.println("[SPK]   VIN -> 3.3V   GND -> GND");
+  Serial.println("[SPK]   SD (shutdown) -> 3.3V  *** REQUIRED — amp muted if low ***");
+  Serial.printf(
+      "[SPK]   BCLK -> GPIO%u   LRC/WS -> GPIO%u   DIN -> GPIO%u\n",
+      (unsigned)I2S_SPK_BCLK_PIN,
+      (unsigned)I2S_SPK_WS_PIN,
+      (unsigned)I2S_SPK_DIN_PIN);
+  Serial.println("[SPK]   GAIN -> NC (default)   + / - -> speaker");
+  Serial.println("[SPK] common mistakes:");
+  Serial.println("[SPK]   SD left floating or on GND -> silent amp");
+  Serial.println("[SPK]   BCLK/LRC/DIN swapped | speaker on wrong +/-");
+  Serial.println("[SPK]   VIN on 5V (use 3.3V)");
+}
+
+static uint32_t samplePinEdges(uint8_t pin, uint32_t samples, uint32_t delay_us) {
+  gpio_reset_pin((gpio_num_t)pin);
+  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
+  gpio_set_pull_mode((gpio_num_t)pin, GPIO_FLOATING);
+
+  uint32_t edges = 0;
+  int last = gpio_get_level((gpio_num_t)pin);
+  for (uint32_t i = 0; i < samples; i++) {
+    delayMicroseconds(delay_us);
+    int v = gpio_get_level((gpio_num_t)pin);
+    if (v != last) {
+      edges++;
+    }
+    last = v;
+  }
+  return edges;
+}
+
+static void fillSineTone(int16_t* buf, size_t samples, float freq_hz, int16_t amplitude, float* phase) {
+  if (buf == nullptr || samples == 0 || phase == nullptr) {
+    return;
+  }
+  const float step = (2.0f * (float)M_PI * freq_hz) / (float)AUDIO_SAMPLE_RATE_HZ;
+  for (size_t i = 0; i < samples; i++) {
+    buf[i] = (int16_t)((float)amplitude * sinf(*phase));
+    *phase += step;
+    if (*phase > 2.0f * (float)M_PI) {
+      *phase -= 2.0f * (float)M_PI;
+    }
+  }
+}
+
+static bool speakerWriteProbe(size_t samples, size_t* bytes_written_out) {
+  if (!speaker_i2s_installed || samples == 0) {
+    return false;
+  }
+
+  static int16_t scratch[256];
+  size_t sent = 0;
+  size_t total_bytes = 0;
+  while (sent < samples) {
+    size_t n = samples - sent;
+    if (n > sizeof(scratch) / sizeof(scratch[0])) {
+      n = sizeof(scratch) / sizeof(scratch[0]);
+    }
+    memset(scratch, 0, n * sizeof(int16_t));
+
+    size_t bytes_written = 0;
+    esp_err_t err = i2s_write(I2S_NUM_1, scratch, n * sizeof(int16_t), &bytes_written, pdMS_TO_TICKS(500));
+    if (err != ESP_OK || bytes_written == 0) {
+      Serial.printf("[SPK]   i2s_write failed at sample %u err=%d\n", (unsigned)sent, (int)err);
+      return false;
+    }
+    sent += bytes_written / sizeof(int16_t);
+    total_bytes += bytes_written;
+  }
+
+  if (bytes_written_out != nullptr) {
+    *bytes_written_out = total_bytes;
+  }
+  return true;
+}
+
+static bool playSineTone(float freq_hz, uint32_t duration_ms, int16_t amplitude) {
+  if (!speaker_i2s_installed) {
+    return false;
+  }
+
+  size_t total_samples = ((size_t)duration_ms * AUDIO_SAMPLE_RATE_HZ) / 1000;
+  if (total_samples == 0) {
+    return false;
+  }
+
+  static int16_t chunk[256];
+  float phase = 0.0f;
+  size_t played = 0;
+  while (played < total_samples) {
+    size_t n = total_samples - played;
+    if (n > sizeof(chunk) / sizeof(chunk[0])) {
+      n = sizeof(chunk) / sizeof(chunk[0]);
+    }
+    fillSineTone(chunk, n, freq_hz, amplitude, &phase);
+    applyMonitorGain(chunk, n);
+    if (!audioPlayMono16k(chunk, n)) {
+      return false;
+    }
+    played += n;
+  }
+  return true;
+}
+
+void audioSpeakerDiag() {
+  if (!audio_ready) {
+    Serial.println("[SPK] audio not initialized");
+    return;
+  }
+
+  Serial.println();
+  Serial.println("[SPK] ===== MAX98357A speaker diagnostic =====");
+  Serial.println("[SPK] Listen for beeps during test 3.");
+  showVoiceStatusScreen("Speaker test", "Listen for beeps");
+  logSpeakerWiringMap();
+
+  bool driver_ok = speaker_i2s_installed;
+  Serial.printf("[SPK] --- test 1: I2S TX driver ---\n");
+  Serial.printf("[SPK]   speaker driver installed: %s\n", driver_ok ? "yes" : "NO");
+
+  Serial.println("[SPK] --- test 2: GPIO line check (I2S paused) ---");
+  uninstallSpeakerSafe();
+  logGpioPin(I2S_SPK_BCLK_PIN, "SPK-BCLK");
+  logGpioPin(I2S_SPK_WS_PIN, "SPK-WS");
+  logGpioPin(I2S_SPK_DIN_PIN, "SPK-DIN");
+
+  if (!installSpeakerTx()) {
+    Serial.println("[SPK] FATAL: could not install speaker I2S driver");
+    showProductSelectScreen();
+    return;
+  }
+
+  Serial.println("[SPK] --- test 3: I2S write probe (silence) ---");
+  size_t bytes_written = 0;
+  bool write_ok = speakerWriteProbe(512, &bytes_written);
+  Serial.printf("[SPK]   i2s_write 512 samples: %s (%u bytes)\n", write_ok ? "OK" : "FAILED", (unsigned)bytes_written);
+
+  Serial.println("[SPK] --- test 4: DIN pin activity while I2S clocks ---");
+  uint32_t din_edges = 0;
+  uint32_t bclk_edges = 0;
+  if (write_ok) {
+    for (int i = 0; i < 24; i++) {
+      speakerWriteProbe(128, nullptr);
+      din_edges += samplePinEdges(I2S_SPK_DIN_PIN, 80, 20);
+      bclk_edges += samplePinEdges(I2S_SPK_BCLK_PIN, 80, 20);
+    }
+    Serial.printf("[SPK]   DIN edges while I2S active: %u\n", (unsigned)din_edges);
+    Serial.printf("[SPK]   BCLK edges while I2S active: %u\n", (unsigned)bclk_edges);
+    if (din_edges == 0 && bclk_edges == 0) {
+      Serial.println("[SPK]   no pin toggling — check BCLK/LRC/DIN wiring to amp");
+    }
+  }
+
+  Serial.println("[SPK] --- test 5: audible tone (880 Hz, 1.5s) ---");
+  showVoiceStatusScreen("Beep test", "880 Hz tone");
+  bool tone880 = playSineTone(880.0f, 1500, 12000);
+  Serial.printf("[SPK]   880 Hz tone: %s\n", tone880 ? "sent to I2S" : "FAILED");
+
+  Serial.println("[SPK] --- test 6: audible tone (440 Hz, 1.0s) ---");
+  showVoiceStatusScreen("Beep test", "440 Hz tone");
+  bool tone440 = playSineTone(440.0f, 1000, 12000);
+  Serial.printf("[SPK]   440 Hz tone: %s\n", tone440 ? "sent to I2S" : "FAILED");
+
+  Serial.println("[SPK] --- diagnosis ---");
+  if (write_ok && tone880 && tone440) {
+    Serial.println("[SPK] I2S SPEAKER PATH OK — software is sending audio to GPIO10/11/12");
+    if (din_edges > 0 || bclk_edges > 0) {
+      Serial.println("[SPK] GPIO activity detected on amp pins");
+    }
+    Serial.println("[SPK] If you heard NO beeps:");
+    Serial.println("[SPK]   1) Tie MAX98357A SD pin to 3.3V (most common fix)");
+    Serial.println("[SPK]   2) Check speaker wires on + and - terminals");
+    Serial.println("[SPK]   3) Verify VIN=3.3V and shared GND");
+    Serial.println("[SPK]   4) Swap BCLK/LRC if garbled but not silent");
+  } else {
+    Serial.println("[SPK] SPEAKER I2S NOT WORKING — driver or write failure");
+    Serial.println("[SPK]   check GPIO 10/11/12 wiring and reboot");
+  }
+  Serial.println("[SPK] ===== done =====");
+  Serial.println();
+  showProductSelectScreen();
+}
+
 void audioDetectHardware() {
   Serial.println();
   Serial.println("[DETECT] ===== hardware scan =====");
@@ -817,6 +1029,24 @@ bool audioInit() {
   }
 
   drainMic(256);
+  voice_buffer = (int16_t*)heap_caps_malloc(
+      AUDIO_VOICE_MAX_SAMPLES * sizeof(int16_t),
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (voice_buffer == nullptr) {
+    Serial.println("[AUDIO] PSRAM voice buffer failed, trying internal RAM...");
+    voice_buffer = (int16_t*)heap_caps_malloc(
+        AUDIO_VOICE_MAX_SAMPLES * sizeof(int16_t),
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  if (voice_buffer == nullptr) {
+    Serial.println("[AUDIO] voice buffer alloc FAILED — out of RAM");
+    uninstallMicSafe();
+    return false;
+  }
+  Serial.printf("[AUDIO] voice buffer %u bytes in %s\n",
+      (unsigned)(AUDIO_VOICE_MAX_SAMPLES * sizeof(int16_t)),
+      esp_ptr_external_ram(voice_buffer) ? "PSRAM" : "internal RAM");
+
   audio_ready = true;
   Serial.println("[AUDIO] mic+speaker init OK");
   Serial.printf(
@@ -828,8 +1058,12 @@ bool audioInit() {
       (unsigned)I2S_SPK_WS_PIN,
       (unsigned)I2S_SPK_DIN_PIN,
       (unsigned)AUDIO_SAMPLE_RATE_HZ);
-  Serial.println("[AUDIO] serial: P=deep diag  D=quick scan  M=mic probe  L=loopback");
-  Serial.printf("[AUDIO] mic status logs every %u ms (like WiFi)\n", (unsigned)AUDIO_MIC_STATUS_LOG_INTERVAL_MS);
+  Serial.println("[AUDIO] serial: P=deep diag  D=quick scan  M=mic probe  L=loopback  S=speaker");
+  Serial.println("[AUDIO] keypad: A=record  B=play back  C=speaker test");
+  Serial.printf("[AUDIO] voice buffer: %u s (%u samples)\n",
+      (unsigned)AUDIO_VOICE_RECORD_MAX_SEC,
+      (unsigned)AUDIO_VOICE_MAX_SAMPLES);
+  Serial.printf("[AUDIO] mic status logs every %u ms when idle\n", (unsigned)AUDIO_MIC_STATUS_LOG_INTERVAL_MS);
   return true;
 }
 
@@ -837,23 +1071,134 @@ bool audioIsReady() {
   return audio_ready;
 }
 
+static void applyMonitorGain(int16_t* buf, size_t samples) {
+  if (buf == nullptr || samples == 0) {
+    return;
+  }
+  for (size_t i = 0; i < samples; i++) {
+    int32_t v = (int32_t)buf[i] * AUDIO_MONITOR_GAIN;
+    if (v > 32767) {
+      v = 32767;
+    } else if (v < -32768) {
+      v = -32768;
+    }
+    buf[i] = (int16_t)v;
+  }
+}
+
 static unsigned long lastMicStatusLogMs = 0;
+
+bool audioVoiceIsRecording() {
+  return voice_recording;
+}
+
+void audioVoiceStartRecord() {
+  if (!audio_ready || voice_buffer == nullptr) {
+    Serial.println("[VOICE] not initialized");
+    return;
+  }
+  if (voice_playing) {
+    Serial.println("[VOICE] busy playing — wait for playback to finish");
+    return;
+  }
+
+  voice_recording = true;
+  voice_recorded_samples = 0;
+  voice_record_peak = 0;
+  voice_record_started_ms = millis();
+  voice_last_log_ms = voice_record_started_ms;
+  drainMic(128);
+
+  Serial.println("[VOICE] RECORD START — speak into mic (press B to play back)");
+  showVoiceStatusScreen("Recording…", "Press B to play");
+  Serial.printf("[VOICE] max duration %.1f s (%u samples)\n",
+      (float)AUDIO_VOICE_RECORD_MAX_SEC,
+      (unsigned)AUDIO_VOICE_MAX_SAMPLES);
+}
+
+void audioVoicePlayRecorded() {
+  if (!audio_ready || voice_buffer == nullptr) {
+    Serial.println("[VOICE] not initialized");
+    return;
+  }
+  if (voice_playing) {
+    Serial.println("[VOICE] already playing");
+    return;
+  }
+
+  if (voice_recording) {
+    unsigned long elapsed = millis() - voice_record_started_ms;
+    voice_recording = false;
+    Serial.printf("[VOICE] RECORD STOP — captured %u samples in %lu ms (peak=%u)\n",
+        (unsigned)voice_recorded_samples,
+        elapsed,
+        (unsigned)voice_record_peak);
+  }
+
+  if (voice_recorded_samples == 0) {
+    Serial.println("[VOICE] nothing to play — press A first and speak");
+    return;
+  }
+
+  float seconds = (float)voice_recorded_samples / (float)AUDIO_SAMPLE_RATE_HZ;
+  Serial.printf("[VOICE] PLAYBACK START — %u samples (%.2f s, gain x%u)\n",
+      (unsigned)voice_recorded_samples,
+      seconds,
+      (unsigned)AUDIO_MONITOR_GAIN);
+  showVoiceStatusScreen("Playing…", "Voice playback");
+
+  voice_playing = true;
+  size_t played = 0;
+  static int16_t play_chunk[256];
+  uint32_t play_peak = 0;
+
+  while (played < voice_recorded_samples) {
+    size_t n = voice_recorded_samples - played;
+    if (n > sizeof(play_chunk) / sizeof(play_chunk[0])) {
+      n = sizeof(play_chunk) / sizeof(play_chunk[0]);
+    }
+
+    memcpy(play_chunk, voice_buffer + played, n * sizeof(int16_t));
+    applyMonitorGain(play_chunk, n);
+
+    for (size_t i = 0; i < n; i++) {
+      int32_t a = play_chunk[i] < 0 ? -play_chunk[i] : play_chunk[i];
+      if ((uint32_t)a > play_peak) {
+        play_peak = (uint32_t)a;
+      }
+    }
+
+    if (!audioPlayMono16k(play_chunk, n)) {
+      Serial.printf("[VOICE] PLAYBACK FAIL at sample %u\n", (unsigned)played);
+      voice_playing = false;
+      return;
+    }
+    played += n;
+  }
+
+  voice_playing = false;
+  Serial.printf("[VOICE] PLAYBACK DONE — peak=%u\n", (unsigned)play_peak);
+  showProductSelectScreen();
+}
 
 void audioLoop() {
   if (!audio_ready) {
     return;
   }
-  if (millis() - lastMicStatusLogMs < AUDIO_MIC_STATUS_LOG_INTERVAL_MS) {
-    return;
-  }
-  lastMicStatusLogMs = millis();
 
   static int16_t chunk[128];
   constexpr size_t kSamples = sizeof(chunk) / sizeof(chunk[0]);
 
+  if (voice_playing) {
+    return;
+  }
+
   MicLevelStats raw = {};
   if (!readMicChunk(chunk, kSamples, &raw)) {
-    Serial.println("[MIC] read failed");
+    if (voice_recording && millis() - voice_last_log_ms >= AUDIO_VOICE_LOG_INTERVAL_MS) {
+      voice_last_log_ms = millis();
+      Serial.println("[VOICE] mic read failed while recording");
+    }
     return;
   }
 
@@ -862,16 +1207,53 @@ void audioLoop() {
   pcm.min_raw = raw.min_raw;
   pcm.max_raw = raw.max_raw;
 
+  if (voice_recording) {
+    if (pcm.peak > voice_record_peak) {
+      voice_record_peak = pcm.peak;
+    }
+
+    size_t space = AUDIO_VOICE_MAX_SAMPLES - voice_recorded_samples;
+    size_t to_copy = kSamples;
+    if (to_copy > space) {
+      to_copy = space;
+    }
+    if (to_copy > 0) {
+      memcpy(voice_buffer + voice_recorded_samples, chunk, to_copy * sizeof(int16_t));
+      voice_recorded_samples += to_copy;
+    }
+
+    if (voice_recorded_samples >= AUDIO_VOICE_MAX_SAMPLES) {
+      voice_recording = false;
+      Serial.printf("[VOICE] RECORD FULL — buffer limit reached (%u samples, peak=%u)\n",
+          (unsigned)voice_recorded_samples,
+          (unsigned)voice_record_peak);
+      return;
+    }
+
+    if (millis() - voice_last_log_ms >= AUDIO_VOICE_LOG_INTERVAL_MS) {
+      voice_last_log_ms = millis();
+      unsigned long elapsed = millis() - voice_record_started_ms;
+      const char* status = micHasSignal(&pcm) ? "SIGNAL" : "quiet";
+      Serial.printf("[VOICE] recording… %lu ms, %u/%u samples, %s peak=%u\n",
+          elapsed,
+          (unsigned)voice_recorded_samples,
+          (unsigned)AUDIO_VOICE_MAX_SAMPLES,
+          status,
+          (unsigned)voice_record_peak);
+    }
+    return;
+  }
+
+  if (millis() - lastMicStatusLogMs < AUDIO_MIC_STATUS_LOG_INTERVAL_MS) {
+    return;
+  }
+  lastMicStatusLogMs = millis();
+
   const char* status = micHasSignal(&pcm) ? "SIGNAL" : "SILENT";
   Serial.printf(
-      "[MIC] OK - %s peak=%u mean=%u pcm=[%d,%d] raw32=[%ld,%ld]\n",
+      "[MIC] idle %s peak=%u — press A to record, B to play\n",
       status,
-      (unsigned)pcm.peak,
-      (unsigned)pcm.mean_abs,
-      (int)pcm.min_pcm,
-      (int)pcm.max_pcm,
-      (long)raw.min_raw,
-      (long)raw.max_raw);
+      (unsigned)pcm.peak);
 }
 
 bool audioRecordMono16k(int16_t* buf, size_t samples) {
@@ -1051,7 +1433,10 @@ bool audioLoopbackTest(uint32_t seconds) {
       logMicStats("loopback mic in", &pcm);
     }
 
-    if (!audioPlayMono16k(chunk, n)) {
+    static int16_t playbuf[AUDIO_LOOPBACK_CHUNK_SAMPLES];
+    memcpy(playbuf, chunk, n * sizeof(int16_t));
+    applyMonitorGain(playbuf, n);
+    if (!audioPlayMono16k(playbuf, n)) {
       Serial.printf("[AUDIO] loopback FAIL (play at %u)\n", (unsigned)done);
       return false;
     }
@@ -1109,5 +1494,15 @@ bool audioProbeMic(uint32_t duration_ms) {
 void audioDetectHardware() {}
 
 void audioDeepDiag() {}
+
+void audioSpeakerDiag() {}
+
+void audioVoiceStartRecord() {}
+
+void audioVoicePlayRecorded() {}
+
+bool audioVoiceIsRecording() {
+  return false;
+}
 
 #endif

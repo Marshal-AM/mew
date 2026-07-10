@@ -332,6 +332,30 @@ void showHeldScreen(const char* reason) {
   oled->display();
 }
 
+void showBootStatusScreen(const char* status) {
+  if (!ready || oled == nullptr) {
+    return;
+  }
+
+  oled->clearDisplay();
+  drawCenteredText(*oled, "Moo POS", 8, 1);
+  drawCenteredText(*oled, status != nullptr ? status : "Booting…", 28, 1);
+  oled->display();
+}
+
+void showVoiceStatusScreen(const char* title, const char* subtitle) {
+  if (!ready || oled == nullptr) {
+    return;
+  }
+
+  oled->clearDisplay();
+  drawCenteredText(*oled, title != nullptr ? title : "Voice", 10, 2);
+  if (subtitle != nullptr && subtitle[0] != '\0') {
+    drawCenteredText(*oled, subtitle, 40, 1);
+  }
+  oled->display();
+}
+
 #elif defined(DISPLAY_TFT)
 
 #include <TFT_eSPI.h>
@@ -496,6 +520,25 @@ void showHeldScreen(const char* reason) {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString(reason ? reason : "Review required", tft.width() / 2, 90, 1);
   tft.drawString("* new sale", tft.width() / 2, tft.height() - 20, 1);
+}
+
+void showBootStatusScreen(const char* status) {
+  if (!ready) return;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString(status ? status : "Booting…", tft.width() / 2, tft.height() / 2, 2);
+}
+
+void showVoiceStatusScreen(const char* title, const char* subtitle) {
+  if (!ready) return;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString(title ? title : "Voice", tft.width() / 2, 40, 2);
+  if (subtitle && subtitle[0]) {
+    tft.drawString(subtitle, tft.width() / 2, 90, 1);
+  }
 }
 
 #endif

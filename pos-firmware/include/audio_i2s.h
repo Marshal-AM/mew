@@ -17,3 +17,10 @@ bool audioProbeMic(uint32_t duration_ms);
 void audioDetectHardware();
 /** Deep I2S/format/pin sweep — send over serial when basic detect fails. */
 void audioDeepDiag();
+/** Speaker/amp diagnostic — GPIO check + test beeps on MAX98357A. */
+void audioSpeakerDiag();
+/** Keypad A: begin buffering mic audio into RAM. */
+void audioVoiceStartRecord();
+/** Keypad B: stop recording (if active) and play buffered audio on speaker. */
+void audioVoicePlayRecorded();
+bool audioVoiceIsRecording();

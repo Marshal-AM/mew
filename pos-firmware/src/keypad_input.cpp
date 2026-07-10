@@ -44,7 +44,7 @@ KeyEvent keypadPoll() {
   Serial.printf("[KEYPAD] pressed '%c'\n", key);
 
   if (key == HOLD) {
-    Serial.println("[KEYPAD] long-press 0 (reserved for voice, Phase 16)");
+    Serial.println("[KEYPAD] long-press 0 → voice/loopback (Phase 16/17)");
     return {KEY_LONG_ZERO, '0'};
   }
 
@@ -54,6 +54,21 @@ KeyEvent keypadPoll() {
 
   if (key == '#') {
     return {KEY_CONFIRM, '#'};
+  }
+
+  if (key == 'A' || key == 'a') {
+    Serial.println("[KEYPAD] pressed 'A' (start voice record)");
+    return {KEY_ACTION_A, 'A'};
+  }
+
+  if (key == 'B' || key == 'b') {
+    Serial.println("[KEYPAD] pressed 'B' (play voice recording)");
+    return {KEY_ACTION_B, 'B'};
+  }
+
+  if (key == 'C' || key == 'c') {
+    Serial.println("[KEYPAD] pressed 'C' (speaker diagnostic)");
+    return {KEY_ACTION_C, 'C'};
   }
 
   if (key == '*') {

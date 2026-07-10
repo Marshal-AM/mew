@@ -8,6 +8,9 @@ typedef enum {
   KEY_CONFIRM,
   KEY_CLEAR,
   KEY_LONG_ZERO,
+  KEY_ACTION_A,
+  KEY_ACTION_B,
+  KEY_ACTION_C,
 } KeyEventType;
 
 typedef struct {

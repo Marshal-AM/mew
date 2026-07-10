@@ -62,6 +62,11 @@ static const uint8_t KEYPAD_COLS = 4;
 #define AUDIO_MIC_STATUS_LOG_INTERVAL_MS 5000
 // INMP441 on this board delivers audio on the I2S RIGHT slot (deep_diag verified).
 #define AUDIO_MIC_PCM_SHIFT 14
+// Boost monitor/playback so speech is audible on the MAX98357A.
+#define AUDIO_MONITOR_GAIN 4
+#define AUDIO_VOICE_RECORD_MAX_SEC 4
+#define AUDIO_VOICE_MAX_SAMPLES (AUDIO_SAMPLE_RATE_HZ * AUDIO_VOICE_RECORD_MAX_SEC)
+#define AUDIO_VOICE_LOG_INTERVAL_MS 1000
 #endif
 
 #elif defined(DISPLAY_OLED)

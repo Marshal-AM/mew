@@ -1,4 +1,4 @@
-﻿import { ConfigContext, ExpoConfig } from "expo/config";
+import { ConfigContext, ExpoConfig } from "expo/config";
 import * as dotenv from "dotenv";
 import * as path from "path";
 
@@ -20,29 +20,32 @@ const supabaseAnonKey =
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: "Moo Wallet",
-  slug: "moo-wallet",
+  name: "MooPay",
+  slug: "moopay",
   version: "0.1.0",
   orientation: "portrait",
-  scheme: "moo-wallet",
+  icon: "./assets/icon.png",
+  scheme: "moopay",
   platforms: ["ios", "android"],
-  userInterfaceStyle: "dark",
+  userInterfaceStyle: "light",
   newArchEnabled: true,
   ios: {
     bundleIdentifier: "com.moo.wallet",
     supportsTablet: false,
     infoPlist: {
+      CFBundleDisplayName: "MooPay",
       NSBluetoothAlwaysUsageDescription:
-        "Moo Wallet uses Bluetooth to connect to POS terminals for offline payments.",
-      NSCameraUsageDescription: "Moo Wallet scans POS payment QR codes.",
+        "MooPay uses Bluetooth to connect to POS terminals for offline payments.",
+      NSCameraUsageDescription: "MooPay scans POS payment QR codes.",
       NSFaceIDUsageDescription:
-        "Moo Wallet uses Face ID to authorize offline payments before signing.",
+        "MooPay uses Face ID to authorize offline payments before signing.",
     },
   },
   android: {
     package: "com.moo.wallet",
     adaptiveIcon: {
-      backgroundColor: "#0a0a0f",
+      foregroundImage: "./assets/adaptive-icon.png",
+      backgroundColor: "#ffffff",
     },
     permissions: [
       "BLUETOOTH",
@@ -56,10 +59,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ],
   },
   plugins: [
+    "expo-router",
     "expo-secure-store",
     "expo-local-authentication",
     ["react-native-ble-plx", { isBackgroundEnabled: false, modes: ["central"] }],
     ["expo-camera", { cameraPermission: "Scan POS payment QR codes" }],
+    "./plugins/withIosXcodeFixes",
   ],
   extra: {
     amoyRpcUrl,

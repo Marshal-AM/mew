@@ -139,16 +139,18 @@ Example `platformio.ini` overrides for a live device:
 -D WIFI_SSID=\"MyNetwork\"
 -D WIFI_PASSWORD=\"secret\"
 -D SUBMIT_URL=\"https://YOUR_PROJECT.supabase.co/functions/v1/submit-transaction\"
+-D POS_PRODUCTS_URL=\"https://YOUR_PROJECT.supabase.co/functions/v1/pos-products\"
 -D SUPABASE_ANON_KEY=\"eyJ...\"
 ```
 
 ## Usage
 
-1. Power on — serial shows pin profile (`esp32-s3-oled`) and `POS_ID`.
-2. Enter amount digit-by-digit (cents accumulator): `5` `0` `0` → `$5.00`.
-3. Press `#` — QR appears; serial logs `[PAYMENT_REQUEST] {...}`.
-4. Scan QR with any phone scanner — JSON should parse cleanly.
-5. Press `*` — start a new sale.
+1. Power on — serial shows pin profile (`esp32-s3-oled`) and `POS_ID`. WiFi connects and syncs the product catalog from `pos-products`.
+2. **Select product:** press keypad `1`–`9` for a catalog slot (see demo seeds in backend migration), or `#` / `0` for a custom sale with no product.
+3. Enter amount digit-by-digit (cents accumulator): `5` `0` `0` → `$5.00`.
+4. Press `#` — QR appears; serial logs `[PAYMENT_REQUEST] ...` (amount only — wallet unchanged).
+5. After the wallet pays over BLE, the POS relays the signed payment to the backend **with `productId` attached** (POS-only; not in QR).
+6. Press `*` during amount entry to clear digits; press `*` again (with amount empty) to go back to product selection. After a completed sale press `*` to start a new sale.
 
 ### Payment request JSON
 
@@ -174,7 +176,7 @@ Long-press `0` is detected and logged (reserved for voice in Phase 16); short ta
 
 1. Configure WiFi + `SUBMIT_URL` in `platformio.ini`, deploy `submit-transaction` Edge Function (see root README).
 2. Flash POS firmware and open serial monitor.
-3. Enter amount, press `#` — QR appears.
+3. Select product (`1` = Coffee, etc.), enter amount, press `#` — QR appears.
 4. On wallet **Pay** tab: sync POS registry, scan QR, confirm, authorize with biometric/PIN.
 5. POS shows **Processing…** then **APPROVED** / **DECLINED** / **HELD** from backend response.
 6. Wallet **History** tab syncs confirmed status + `tx_hash` when online.
@@ -184,7 +186,7 @@ Long-press `0` is detected and logged (reserved for voice in Phase 16); short ta
 1. Type `5` `0` `0` → screen shows `$5.00`
 2. Press `#` → QR renders
 3. Scan QR → JSON matches serial `[PAYMENT_REQUEST]` line
-4. Press `*` → back to amount entry
+4. Press `*` → clears amount; press `*` again → back to product selection
 5. Generate 20+ requests → all `reqId` / `posNonce` values differ
 
 ## Project layout

@@ -52,6 +52,7 @@ static RelayResult parseStatus(
 
 RelayResult relaySubmitPayment(
     const char* signedJson,
+    const char* productId,
     char* reasonOut,
     size_t reasonLen,
     char* txHashOut,
@@ -77,6 +78,24 @@ RelayResult relaySubmitPayment(
     return RELAY_ERROR;
   }
 
+  JsonDocument doc;
+  DeserializationError parseErr = deserializeJson(doc, signedJson);
+  if (parseErr) {
+    if (reasonOut && reasonLen > 0) {
+      strncpy(reasonOut, "Bad signed JSON", reasonLen - 1);
+    }
+    return RELAY_ERROR;
+  }
+
+  if (productId != nullptr && productId[0] != '\0') {
+    doc["productId"] = productId;
+    Serial.print("[RELAY] attaching productId=");
+    Serial.println(productId);
+  }
+
+  String relayBody;
+  serializeJson(doc, relayBody);
+
   WiFiClientSecure client;
   client.setInsecure();
 
@@ -94,7 +113,7 @@ RelayResult relaySubmitPayment(
   http.setTimeout(60000);
 
   Serial.println("[RELAY] POST submit-transaction");
-  int code = http.POST((uint8_t*)signedJson, strlen(signedJson));
+  int code = http.POST(relayBody);
   String body = http.getString();
   http.end();
 
@@ -108,7 +127,7 @@ RelayResult relaySubmitPayment(
     return RELAY_ERROR;
   }
 
-  JsonDocument doc;
+  doc.clear();
   DeserializationError err = deserializeJson(doc, body);
   if (err) {
     if (reasonOut && reasonLen > 0) {

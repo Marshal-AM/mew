@@ -11,6 +11,7 @@ typedef enum {
 
 RelayResult relaySubmitPayment(
     const char* signedJson,
+    const char* productId,
     char* reasonOut,
     size_t reasonLen,
     char* txHashOut,

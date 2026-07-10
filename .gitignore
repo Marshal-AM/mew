@@ -27,12 +27,20 @@ wallet-app/logs/
 wallet-app/android/.gradle/
 wallet-app/android/app/build/
 
-# PlatformIO
-pos-firmware/.pio/
+# PlatformIO (firmware + standalone test sketches)
+**/.pio/
+pos-firmware/.venv/
 
 # Supabase
 backend/.branches/
 backend/.temp/
+backend/supabase/.temp/
+
+# Standalone ESP32 test folders (local build/output only)
+qrtest/flash.ps1
+qrtest/**/*.zip
+qrtest1/**/*.zip
+qrtest2/**/*.zip
 
 # OS / IDE
 .DS_Store

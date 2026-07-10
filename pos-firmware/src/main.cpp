@@ -6,6 +6,7 @@
 #include "ble_transport.h"
 #include "wifi_setup.h"
 #include "time_util.h"
+#include "product_catalog.h"
 
 #include <Arduino.h>
 
@@ -27,7 +28,7 @@ void setup() {
   delay(300);
 
   Serial.println();
-  Serial.println("Moo POS firmware — Phase 7");
+  Serial.println("Moo POS firmware — Phase 7 + products");
   Serial.print("Pin profile: ");
   Serial.println(PIN_PROFILE_NAME);
   Serial.print("POS ID: ");
@@ -35,6 +36,7 @@ void setup() {
 
   timeInitNtp();
   wifiSetupInit();
+  productCatalogInit();
   keypadInit();
   bleTransportInit();
   bleTransportSetSignedPaymentHandler(onSignedPayment);
@@ -43,12 +45,19 @@ void setup() {
     Serial.println("[FATAL] display init failed");
   } else {
     uiInit(&ui);
-    Serial.println("Ready. Enter amount, press # to show QR.");
+    Serial.println("Ready. Select product (1-9), enter amount, press # to show QR.");
   }
 }
 
 void loop() {
   wifiLoop();
+  productCatalogLoop();
+
+  static bool catalogScreenSynced = false;
+  if (productCatalogIsLoaded() && !catalogScreenSynced) {
+    catalogScreenSynced = true;
+    uiRefreshProductScreenIfNeeded(&ui);
+  }
 
   if (!displayIsReady()) {
     delay(50);

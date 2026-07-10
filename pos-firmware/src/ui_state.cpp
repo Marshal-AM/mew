@@ -4,11 +4,28 @@
 #include "display.h"
 #include "ble_transport.h"
 #include "relay_client.h"
+#include "product_catalog.h"
 
 #include <Arduino.h>
 #include <string.h>
 
 static uint8_t digitKeyCount = 0;
+
+static void clearSelectedProduct(UiContext* ctx) {
+  ctx->selectedProductId[0] = '\0';
+  ctx->selectedProductName[0] = '\0';
+  ctx->hasProduct = false;
+}
+
+static void setSelectedProduct(UiContext* ctx, const CatalogProduct* product) {
+  if (product == nullptr) {
+    clearSelectedProduct(ctx);
+    return;
+  }
+  strncpy(ctx->selectedProductId, product->id, sizeof(ctx->selectedProductId) - 1);
+  strncpy(ctx->selectedProductName, product->name, sizeof(ctx->selectedProductName) - 1);
+  ctx->hasProduct = true;
+}
 
 static void appendDigit(UiContext* ctx, char digit) {
   if (digitKeyCount >= MAX_DIGIT_KEYS) {
@@ -26,12 +43,20 @@ static void appendDigit(UiContext* ctx, char digit) {
   digitKeyCount++;
 }
 
-static void resetAmount(UiContext* ctx) {
+static void beginNewSale(UiContext* ctx) {
+  ctx->cents = 0;
+  digitKeyCount = 0;
+  ctx->state = STATE_SELECT_PRODUCT;
+  memset(&ctx->request, 0, sizeof(ctx->request));
+  clearSelectedProduct(ctx);
+  showProductSelectScreen();
+}
+
+static void goToAmountEntry(UiContext* ctx) {
   ctx->cents = 0;
   digitKeyCount = 0;
   ctx->state = STATE_ENTER_AMOUNT;
-  memset(&ctx->request, 0, sizeof(ctx->request));
-  showEntryScreen(ctx->cents);
+  showEntryScreen(ctx->cents, ctx->hasProduct ? ctx->selectedProductName : nullptr);
 }
 
 static bool extractJsonStringField(const char* json, const char* key, char* out, size_t outLen) {
@@ -53,11 +78,7 @@ static bool extractJsonStringField(const char* json, const char* key, char* out,
 }
 
 void uiInit(UiContext* ctx) {
-  ctx->state = STATE_ENTER_AMOUNT;
-  ctx->cents = 0;
-  digitKeyCount = 0;
-  memset(&ctx->request, 0, sizeof(ctx->request));
-  showEntryScreen(ctx->cents);
+  beginNewSale(ctx);
 }
 
 void uiOnSignedPayment(UiContext* ctx, const char* json) {
@@ -83,7 +104,8 @@ void uiOnSignedPayment(UiContext* ctx, const char* json) {
 
   char reason[96];
   char txHash[96];
-  RelayResult result = relaySubmitPayment(json, reason, sizeof(reason), txHash, sizeof(txHash));
+  const char* productId = ctx->hasProduct ? ctx->selectedProductId : "";
+  RelayResult result = relaySubmitPayment(json, productId, reason, sizeof(reason), txHash, sizeof(txHash));
   Serial.println("[UI] relay complete; sending settlement result over BLE");
   bleTransportNotifySettlement(result, reason, txHash);
 
@@ -111,19 +133,82 @@ void uiOnSignedPayment(UiContext* ctx, const char* json) {
   }
 }
 
+static void handleSelectProductKey(UiContext* ctx, KeyEvent event) {
+  if (event.type == KEY_CLEAR) {
+    showProductSelectScreen();
+    return;
+  }
+
+  if (event.type == KEY_CONFIRM) {
+    Serial.println("[UI] custom sale (no product)");
+    goToAmountEntry(ctx);
+    return;
+  }
+
+  if (event.type != KEY_DIGIT) {
+    return;
+  }
+
+  uint8_t slot = (uint8_t)(event.digit - '0');
+  if (slot == 0) {
+    Serial.println("[UI] custom sale via 0");
+    goToAmountEntry(ctx);
+    return;
+  }
+
+  const CatalogProduct* product = productCatalogFindBySlot(slot);
+  if (product == nullptr) {
+    showError("No product");
+    Serial.printf("[UI] no product on slot %u\n", slot);
+    delay(800);
+    showProductSelectScreen();
+    return;
+  }
+
+  setSelectedProduct(ctx, product);
+  Serial.printf("[UI] selected slot %u: %s\n", slot, product->name);
+  goToAmountEntry(ctx);
+}
+
+void uiRefreshProductScreenIfNeeded(UiContext* ctx) {
+  if (ctx != nullptr && ctx->state == STATE_SELECT_PRODUCT) {
+    showProductSelectScreen();
+  }
+}
+
 void uiHandleKey(UiContext* ctx, KeyEvent event) {
   if (event.type == KEY_NONE || event.type == KEY_LONG_ZERO) {
     return;
   }
 
   if (event.type == KEY_CLEAR) {
+    if (ctx->state == STATE_SELECT_PRODUCT) {
+      showProductSelectScreen();
+      return;
+    }
     if (ctx->state == STATE_ENTER_AMOUNT) {
-      resetAmount(ctx);
-    } else if (
+      if (ctx->cents > 0 || digitKeyCount > 0) {
+        ctx->cents = 0;
+        digitKeyCount = 0;
+        showEntryScreen(ctx->cents, ctx->hasProduct ? ctx->selectedProductName : nullptr);
+        return;
+      }
+      ctx->state = STATE_SELECT_PRODUCT;
+      clearSelectedProduct(ctx);
+      showProductSelectScreen();
+      Serial.println("[UI] back to product select");
+      return;
+    }
+    if (
         ctx->state == STATE_SHOW_QR || ctx->state == STATE_APPROVED || ctx->state == STATE_DECLINED ||
         ctx->state == STATE_HELD) {
-      resetAmount(ctx);
+      beginNewSale(ctx);
     }
+    return;
+  }
+
+  if (ctx->state == STATE_SELECT_PRODUCT) {
+    handleSelectProductKey(ctx, event);
     return;
   }
 
@@ -137,7 +222,7 @@ void uiHandleKey(UiContext* ctx, KeyEvent event) {
 
   if (event.type == KEY_DIGIT) {
     appendDigit(ctx, event.digit);
-    showEntryScreen(ctx->cents);
+    showEntryScreen(ctx->cents, ctx->hasProduct ? ctx->selectedProductName : nullptr);
     return;
   }
 

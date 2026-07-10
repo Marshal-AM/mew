@@ -13,13 +13,24 @@ export function getSupabase(): SupabaseClient {
   return client;
 }
 
-export function getSupabaseWithSession(accessToken: string, refreshToken: string): SupabaseClient {
+export function getSupabaseWithSession(accessToken: string, _refreshToken?: string): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
   }
-  const c = createClient(url, key);
-  void c.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+  const c = createClient(url, key, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+  void c.realtime.setAuth(accessToken);
   return c;
 }

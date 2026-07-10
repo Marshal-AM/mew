@@ -406,11 +406,54 @@ export async function resolvePosDevice(admin: SupabaseClient, posId: string) {
   return data;
 }
 
+async function resolvePosProduct(
+  admin: SupabaseClient,
+  merchantId: string,
+  productId?: string
+): Promise<{ product_id?: string; product_name?: string }> {
+  if (!productId) {
+    return {};
+  }
+
+  const { data: product, error } = await admin
+    .from("products")
+    .select("id, name, merchant_id, active")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Product lookup failed: ${error.message}`);
+  }
+  if (!product || !product.active || product.merchant_id !== merchantId) {
+    throw new Error("Invalid or inactive product for this POS merchant");
+  }
+
+  return { product_id: product.id as string, product_name: product.name as string };
+}
+
 export async function insertTransaction(
   admin: SupabaseClient,
   payload: SignedPaymentPayload,
   merchantId: string
 ) {
+  const product = await resolvePosProduct(admin, merchantId, payload.productId);
+
+  const signedPayload = {
+    t: payload.t,
+    value: payload.value,
+    signature: payload.signature,
+    tokenAddress: payload.tokenAddress,
+    posNonce: payload.posNonce,
+    from: payload.from,
+    to: payload.to,
+    validAfter: payload.validAfter,
+    validBefore: payload.validBefore,
+    nonce: payload.nonce,
+    reqId: payload.reqId,
+    posId: payload.posId,
+    ...(payload.productId ? { productId: payload.productId } : {}),
+  };
+
   const { data, error } = await admin
     .from("transactions")
     .insert({
@@ -424,6 +467,9 @@ export async function insertTransaction(
       from_address: payload.from.toLowerCase(),
       to_address: payload.to.toLowerCase(),
       status: "pending",
+      product_id: product.product_id ?? null,
+      product_name: product.product_name ?? null,
+      signed_payload: signedPayload,
     })
     .select("id")
     .single();

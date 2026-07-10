@@ -4,7 +4,8 @@
 
 bool displayInit();
 bool displayIsReady();
-void showEntryScreen(uint32_t cents);
+void showProductSelectScreen();
+void showEntryScreen(uint32_t cents, const char* productName);
 void showQrScreen(const char* json, uint32_t cents);
 void showError(const char* msg);
 void showPendingScreen(uint32_t cents);

@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "payment_request.h"
+#include "product_catalog.h"
 
 #include <Arduino.h>
 #include <stdio.h>
@@ -205,7 +206,41 @@ bool displayIsReady() {
   return ready;
 }
 
-void showEntryScreen(uint32_t cents) {
+void showProductSelectScreen() {
+  if (!ready || oled == nullptr) {
+    return;
+  }
+
+  oled->clearDisplay();
+  drawCenteredText(*oled, "Select product", 0, 1);
+
+  uint8_t y = 14;
+  uint8_t shown = 0;
+  for (uint8_t slot = 1; slot <= 9 && shown < 3; slot++) {
+    const CatalogProduct* product = productCatalogFindBySlot(slot);
+    if (product == nullptr) {
+      continue;
+    }
+    char line[28];
+    snprintf(line, sizeof(line), "%u:%s", slot, product->name);
+    oled->setTextSize(1);
+    oled->setTextColor(SH110X_WHITE);
+    oled->setCursor(0, y);
+    oled->println(line);
+    y += 10;
+    shown++;
+  }
+
+  if (shown == 0) {
+    drawCenteredText(*oled, "No products", 24, 1);
+    drawCenteredText(*oled, "# custom sale", 40, 1);
+  } else {
+    drawCenteredText(*oled, "1-9 pick  # custom", 52, 1);
+  }
+  oled->display();
+}
+
+void showEntryScreen(uint32_t cents, const char* productName) {
   if (!ready || oled == nullptr) {
     return;
   }
@@ -214,9 +249,18 @@ void showEntryScreen(uint32_t cents) {
   formatCents(cents, line, sizeof(line));
 
   oled->clearDisplay();
-  drawCenteredText(*oled, "Enter amount", 0, 1);
-  drawCenteredText(*oled, line, 24, 2);
-  drawCenteredText(*oled, "# confirm  * clear", 56, 1);
+  if (productName != nullptr && productName[0] != '\0') {
+    oled->setTextSize(1);
+    oled->setTextColor(SH110X_WHITE);
+    oled->setCursor(0, 0);
+    oled->println(productName);
+    drawCenteredText(*oled, line, 22, 2);
+    drawCenteredText(*oled, "# confirm  * clear", 52, 1);
+  } else {
+    drawCenteredText(*oled, "Enter amount", 0, 1);
+    drawCenteredText(*oled, line, 24, 2);
+    drawCenteredText(*oled, "# confirm  * clear", 56, 1);
+  }
   oled->display();
 }
 
@@ -316,7 +360,41 @@ bool displayIsReady() {
   return ready;
 }
 
-void showEntryScreen(uint32_t cents) {
+void showProductSelectScreen() {
+  if (!ready) {
+    return;
+  }
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString("Select product", tft.width() / 2, 10, 2);
+
+  tft.setTextDatum(TL_DATUM);
+  uint8_t y = 40;
+  uint8_t shown = 0;
+  for (uint8_t slot = 1; slot <= 9 && shown < 5; slot++) {
+    const CatalogProduct* product = productCatalogFindBySlot(slot);
+    if (product == nullptr) {
+      continue;
+    }
+    char line[32];
+    snprintf(line, sizeof(line), "%u: %s", slot, product->name);
+    tft.drawString(line, 8, y, 2);
+    y += 28;
+    shown++;
+  }
+
+  tft.setTextDatum(TC_DATUM);
+  if (shown == 0) {
+    tft.drawString("No products", tft.width() / 2, 80, 2);
+    tft.drawString("# custom sale", tft.width() / 2, 120, 1);
+  } else {
+    tft.drawString("1-9 pick  # custom", tft.width() / 2, tft.height() - 20, 1);
+  }
+}
+
+void showEntryScreen(uint32_t cents, const char* productName) {
   if (!ready) {
     return;
   }
@@ -327,9 +405,15 @@ void showEntryScreen(uint32_t cents) {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextDatum(TC_DATUM);
-  tft.drawString("Enter amount", tft.width() / 2, 10, 2);
-  tft.drawString(line, tft.width() / 2, 60, 4);
-  tft.drawString("# confirm  * clear", tft.width() / 2, tft.height() - 20, 1);
+  if (productName != nullptr && productName[0] != '\0') {
+    tft.drawString(productName, tft.width() / 2, 10, 2);
+    tft.drawString(line, tft.width() / 2, 70, 4);
+    tft.drawString("# confirm  * clear", tft.width() / 2, tft.height() - 20, 1);
+  } else {
+    tft.drawString("Enter amount", tft.width() / 2, 10, 2);
+    tft.drawString(line, tft.width() / 2, 60, 4);
+    tft.drawString("# confirm  * clear", tft.width() / 2, tft.height() - 20, 1);
+  }
 }
 
 void showQrScreen(const char* json, uint32_t cents) {

@@ -43,5 +43,13 @@ export function parseSignedPaymentPayload(body: unknown): SignedPaymentPayload {
     throw new Error("Invalid tokenAddress");
   }
 
+  const productId = raw.productId;
+  if (productId != null) {
+    if (typeof productId !== "string" || productId.length === 0) {
+      throw new Error("Invalid productId");
+    }
+    payload.productId = productId;
+  }
+
   return payload;
 }

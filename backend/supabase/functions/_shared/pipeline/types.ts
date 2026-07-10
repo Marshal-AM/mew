@@ -13,6 +13,8 @@ export type SignedPaymentPayload = {
   nonce: string;
   reqId: string;
   posId: string;
+  /** Set by POS at relay time only — not part of the wallet signature. */
+  productId?: string;
 };
 
 export type PipelineHalt = "declined" | "held";

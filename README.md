@@ -126,12 +126,39 @@ npm run test:screening
 1. Run Phase 9 migration [`backend/supabase/migrations/20250708130000_phase9_fraud.sql`](backend/supabase/migrations/20250708130000_phase9_fraud.sql).
 2. Redeploy: `npx supabase functions deploy submit-transaction`
 3. Global defaults: `max_per_tap` 500 USDC, `daily_amount` 10,000 USDC, `daily_tx_count` 50.
-4. Edit thresholds via dashboard **Compliance** → Fraud Rules, or `compliance_upsert_fraud_rule` RPC (see [`backend/docs/fraud.md`](backend/docs/fraud.md)).
+4. Edit thresholds via dashboard **Compliance → Fraud Rules** (`/compliance/fraud-rules`), or `compliance_upsert_fraud_rule` RPC (see [`backend/docs/fraud.md`](backend/docs/fraud.md)).
 5. **E2E:** transaction over per-tap cap → POS **HELD** at step 4; cumulative daily breach → held with `review_queue` + audit metadata.
 
 ```bash
 cd backend
 npm run test:fraud
+```
+
+### Merchant dashboard + compliance console (Phase 15)
+
+1. Run migration [`backend/supabase/migrations/20250710150000_phase15_dashboard.sql`](backend/supabase/migrations/20250710150000_phase15_dashboard.sql) (included in updated [`setup.sql`](backend/supabase/setup.sql)).
+2. Deploy edge functions:
+   ```bash
+   cd backend
+   npx supabase functions deploy merchant-auth --project-ref pxqcsqnsgukmszuxxxbi
+   npx supabase functions deploy submit-transaction --project-ref pxqcsqnsgukmszuxxxbi
+   npx supabase functions deploy resume-transaction --project-ref pxqcsqnsgukmszuxxxbi
+   npx supabase functions deploy compliance-action --project-ref pxqcsqnsgukmszuxxxbi
+   ```
+3. Set `COMPLIANCE_OFFICER_WALLETS` on `merchant-auth` (comma-separated officer wallets).
+4. Dashboard: `cd dashboard && npm run dev`
+   - Merchant: `/login` → `/merchant` (analytics pinned to demo wallet `0x2514844F312c02Ae3C9d4fEb40db4eC8830b6844`)
+   - Products: `/merchant/products` — CRUD + POS keypad slots 1–9 (syncs to firmware via `pos-products`)
+   - Compliance: `/compliance/login` → review queue, audit log, frozen addresses, kill switch, fraud rules
+5. **E2E products:** add "Muffin" on key 4 → reboot POS → sale records `product_name` on transaction.
+
+See [`dashboard/README.md`](dashboard/README.md) and [`backend/docs/pos-products.md`](backend/docs/pos-products.md).
+
+```bash
+cd backend
+node scripts/test-dashboard-rpcs.mjs
+node scripts/test-kill-switch.mjs
+# node scripts/test-review-release.mjs  # needs COMPLIANCE_OFFICER_JWT + TEST_TX_ID
 ```
 
 ### Standalone Android APK build on Windows
@@ -169,7 +196,9 @@ npx expo run:android
 
 `wallet-app/android/local.properties` points `sdk.dir` at the default SDK path above.
 
-### Dashboard
+### Dashboard (Phase 15)
+
+See [`dashboard/README.md`](dashboard/README.md) for routes, products workflow, and compliance officer setup.
 
 ```bash
 cd dashboard

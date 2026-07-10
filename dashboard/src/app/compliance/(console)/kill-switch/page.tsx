@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { loadSession } from "@/lib/session";
+import { notify } from "@/lib/notify";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBanner } from "@/components/StatusBanner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -11,18 +14,18 @@ export default function KillSwitchPage() {
   const [suspended, setSuspended] = useState(false);
   const [reason, setReason] = useState("");
   const [meta, setMeta] = useState<Record<string, unknown>>({});
-  const [status, setStatus] = useState("");
 
   const load = useCallback(async () => {
     const supabase = getAuthenticatedClient();
     if (!supabase) return;
     const { data, error } = await supabase.rpc("compliance_get_system_suspension");
-    if (error) setStatus(error.message);
-    else {
-      const v = (data ?? {}) as Record<string, unknown>;
-      setSuspended(Boolean(v.suspended));
-      setMeta(v);
+    if (error) {
+      notify.error("Could not load suspension state", { description: error.message });
+      return;
     }
+    const v = (data ?? {}) as Record<string, unknown>;
+    setSuspended(Boolean(v.suspended));
+    setMeta(v);
   }, []);
 
   useEffect(() => {
@@ -43,32 +46,43 @@ export default function KillSwitchPage() {
       body: JSON.stringify({ action: "set_suspension", suspended: next, reason: reason || null }),
     });
     const json = await res.json();
-    if (!res.ok) setStatus(json.error ?? "Update failed");
-    else {
-      setStatus(next ? "System suspended" : "System resumed");
+    if (!res.ok) {
+      notify.error("Update failed", { description: json.error ?? "Unknown error" });
+    } else {
+      notify.success(next ? "System suspended" : "System resumed");
       await load();
     }
   };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Kill Switch</h1>
-      <p className="text-sm text-muted-foreground">{status}</p>
+    <div className="space-y-6">
+      <PageHeader
+        title="Kill Switch"
+        description="Halt all new transactions system-wide during incidents or maintenance."
+      />
+
       {suspended ? (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-3">
-          System-wide suspension is active. All new transactions will be held.
-        </p>
+        <StatusBanner
+          variant="warning"
+          message="System-wide suspension is active. All new transactions will be held."
+        />
       ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>System-wide suspension</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 max-w-lg">
-          <p className="text-sm">
-            Current state: <strong>{suspended ? "SUSPENDED" : "NORMAL"}</strong>
+        <CardContent className="space-y-5 max-w-lg">
+          <p className="text-[13px] text-muted-foreground">
+            Current state:{" "}
+            <span className={`font-semibold ${suspended ? "text-destructive" : "text-secondary"}`}>
+              {suspended ? "SUSPENDED" : "NORMAL"}
+            </span>
           </p>
           {meta.updated_at ? (
-            <p className="text-xs text-muted-foreground">Last change: {String(meta.updated_at)}</p>
+            <p className="text-[11px] text-subtle uppercase tracking-wider">
+              Last change: {String(meta.updated_at)}
+            </p>
           ) : null}
           <div className="space-y-2">
             <Label>Reason (optional)</Label>
@@ -80,7 +94,9 @@ export default function KillSwitchPage() {
                 Suspend all transactions
               </Button>
             ) : (
-              <Button onClick={() => void toggle(false)}>Lift suspension</Button>
+              <Button variant="success" onClick={() => void toggle(false)}>
+                Lift suspension
+              </Button>
             )}
           </div>
         </CardContent>

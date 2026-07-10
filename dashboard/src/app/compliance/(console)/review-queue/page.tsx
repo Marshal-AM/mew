@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { loadSession } from "@/lib/session";
+import { notify } from "@/lib/notify";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
+import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -39,7 +41,8 @@ export default function ReviewQueuePage() {
     if (!supabase) return;
     const { data, error } = await supabase.rpc("compliance_fetch_review_queue", { p_status: "open" });
     if (error) {
-      setStatus(error.message);
+      notify.error("Could not load review queue", { description: error.message });
+      setStatus("");
       return;
     }
     setRows((data as QueueRow[]) ?? []);
@@ -77,18 +80,26 @@ export default function ReviewQueuePage() {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error ?? "Resume failed");
       }
+      const labels = { release: "released", decline: "declined", escalate_str: "escalated to STR" };
+      notify.success(`Transaction ${labels[action]}`);
       await load();
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Action failed");
+      notify.error("Action failed", {
+        description: e instanceof Error ? e.message : "Unknown error",
+      });
     } finally {
       setBusyId(null);
     }
   };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Review Queue</h1>
-      <p className="text-sm text-muted-foreground">{status}</p>
+    <div className="space-y-6">
+      <PageHeader
+        title="Review Queue"
+        description="Release, decline, or escalate flagged transactions awaiting compliance review."
+        status={status || undefined}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Open items</CardTitle>
@@ -109,7 +120,7 @@ export default function ReviewQueuePage() {
               {rows.map((r) => (
                 <TableRow key={r.queue_id}>
                   <TableCell>{new Date(r.queue_created_at).toLocaleString()}</TableCell>
-                  <TableCell>{Number(r.amount).toFixed(2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{Number(r.amount).toFixed(2)}</TableCell>
                   <TableCell>{r.product_name ?? "—"}</TableCell>
                   <TableCell className="max-w-[200px] truncate">{r.resolution ?? "—"}</TableCell>
                   <TableCell>
@@ -118,6 +129,7 @@ export default function ReviewQueuePage() {
                   <TableCell className="space-x-1">
                     <Button
                       size="sm"
+                      variant="success"
                       disabled={busyId === r.queue_id}
                       onClick={() => void act(r.queue_id, "release", r.transaction_id)}
                     >

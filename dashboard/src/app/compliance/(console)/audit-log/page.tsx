@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { notify } from "@/lib/notify";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
+import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -40,7 +42,8 @@ export default function AuditLogPage() {
       p_to: null,
     });
     if (error) {
-      setStatus(error.message);
+      notify.error("Could not load audit log", { description: error.message });
+      setStatus("");
       return;
     }
     setRows((data as AuditRow[]) ?? []);
@@ -52,14 +55,19 @@ export default function AuditLogPage() {
   }, [load]);
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Audit Log</h1>
+    <div className="space-y-6">
+      <PageHeader
+        title="Audit Log"
+        description="Search pipeline steps across merchants and transactions."
+        status={status || undefined}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Filters</CardTitle>
         </CardHeader>
-        <CardContent className="flex gap-3 items-end max-w-md">
-          <div className="space-y-2 flex-1">
+        <CardContent className="flex flex-wrap gap-3 items-end max-w-lg">
+          <div className="space-y-2 flex-1 min-w-[200px]">
             <Label>Pipeline step</Label>
             <Input value={step} onChange={(e) => setStep(e.target.value)} placeholder="e.g. fraud.velocity" />
           </div>
@@ -68,7 +76,7 @@ export default function AuditLogPage() {
           </Button>
         </CardContent>
       </Card>
-      <p className="text-sm text-muted-foreground">{status}</p>
+
       <Card>
         <CardContent className="pt-6">
           <Table>
@@ -85,10 +93,10 @@ export default function AuditLogPage() {
               {rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>{new Date(r.created_at).toLocaleString()}</TableCell>
-                  <TableCell>{r.step}</TableCell>
+                  <TableCell className="font-mono text-xs">{r.step}</TableCell>
                   <TableCell>{r.result}</TableCell>
                   <TableCell className="font-mono text-xs">{r.transaction_id?.slice(0, 8) ?? "—"}</TableCell>
-                  <TableCell className="max-w-xs truncate text-xs">
+                  <TableCell className="max-w-xs truncate text-xs text-muted-foreground">
                     {JSON.stringify(r.metadata)}
                   </TableCell>
                 </TableRow>

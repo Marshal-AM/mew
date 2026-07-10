@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { notify } from "@/lib/notify";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/StatCard";
+import { StatusBanner } from "@/components/StatusBanner";
 
 export default function ComplianceOverviewPage() {
   const [openReviews, setOpenReviews] = useState(0);
@@ -18,9 +20,24 @@ export default function ComplianceOverviewPage() {
       supabase.rpc("compliance_fetch_frozen_addresses"),
       supabase.rpc("compliance_get_system_suspension"),
     ]);
+    if (rq.error) {
+      notify.error("Could not load review queue", { description: rq.error.message });
+    }
+    if (fr.error) {
+      notify.error("Could not load frozen addresses", { description: fr.error.message });
+    }
+    if (sus.error) {
+      notify.error("Could not load suspension state", { description: sus.error.message });
+    }
     setOpenReviews(rq.data?.length ?? 0);
     setFrozenCount(fr.data?.length ?? 0);
-    setSuspended(Boolean((sus.data as { suspended?: boolean })?.suspended));
+    const isSuspended = Boolean((sus.data as { suspended?: boolean })?.suspended);
+    setSuspended(isSuspended);
+    if (isSuspended) {
+      notify.warning("System-wide suspension is active", {
+        description: "All new transactions are held.",
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -29,46 +46,37 @@ export default function ComplianceOverviewPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Compliance Console</h1>
+      <PageHeader
+        title="Compliance Console"
+        description="Monitor review queue, frozen addresses, and system-wide payment controls."
+      />
+
       {suspended ? (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-3">
-          System-wide suspension is ACTIVE — all new transactions are held.
-        </p>
+        <StatusBanner
+          variant="warning"
+          message="System-wide suspension is ACTIVE — all new transactions are held."
+        />
       ) : null}
+
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardDescription>Open review queue</CardDescription>
-            <CardTitle className="text-3xl">{openReviews}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Link href="/compliance/review-queue" className="text-sm underline">
-              View queue
-            </Link>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Frozen addresses</CardDescription>
-            <CardTitle className="text-3xl">{frozenCount}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Link href="/compliance/frozen" className="text-sm underline">
-              Manage freezes
-            </Link>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Kill switch</CardDescription>
-            <CardTitle className="text-3xl">{suspended ? "ON" : "OFF"}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Link href="/compliance/kill-switch" className="text-sm underline">
-              Toggle suspension
-            </Link>
-          </CardContent>
-        </Card>
+        <StatCard
+          label="Open review queue"
+          value={openReviews}
+          href="/compliance/review-queue"
+          linkLabel="View queue"
+        />
+        <StatCard
+          label="Frozen addresses"
+          value={frozenCount}
+          href="/compliance/frozen"
+          linkLabel="Manage freezes"
+        />
+        <StatCard
+          label="Kill switch"
+          value={suspended ? "ON" : "OFF"}
+          href="/compliance/kill-switch"
+          linkLabel="Toggle suspension"
+        />
       </div>
     </div>
   );

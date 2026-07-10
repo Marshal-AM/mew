@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { loadSession } from "@/lib/session";
+import { notify } from "@/lib/notify";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
+import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -34,11 +36,13 @@ export default function FrozenAddressesPage() {
     const supabase = getAuthenticatedClient();
     if (!supabase) return;
     const { data, error } = await supabase.rpc("compliance_fetch_frozen_addresses");
-    if (error) setStatus(error.message);
-    else {
-      setRows((data as FrozenRow[]) ?? []);
-      setStatus(`${data?.length ?? 0} frozen address(es)`);
+    if (error) {
+      notify.error("Could not load frozen addresses", { description: error.message });
+      setStatus("");
+      return;
     }
+    setRows((data as FrozenRow[]) ?? []);
+    setStatus(`${data?.length ?? 0} frozen address(es)`);
   }, []);
 
   useEffect(() => {
@@ -60,8 +64,10 @@ export default function FrozenAddressesPage() {
       body: JSON.stringify({ action: "freeze", address, reason, order_ref: orderRef || null }),
     });
     const json = await res.json();
-    if (!res.ok) setStatus(json.error ?? "Freeze failed");
-    else {
+    if (!res.ok) {
+      notify.error("Freeze failed", { description: json.error ?? "Unknown error" });
+    } else {
+      notify.success("Address frozen");
       setAddress("");
       setReason("");
       setOrderRef("");
@@ -83,23 +89,31 @@ export default function FrozenAddressesPage() {
       body: JSON.stringify({ action: "unfreeze", address: addr }),
     });
     const json = await res.json();
-    if (!res.ok) setStatus(json.error ?? "Unfreeze failed");
-    else await load();
+    if (!res.ok) {
+      notify.error("Unfreeze failed", { description: json.error ?? "Unknown error" });
+    } else {
+      notify.success("Address unfrozen");
+      await load();
+    }
   };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Frozen Addresses</h1>
-      <p className="text-sm text-muted-foreground">{status}</p>
+    <div className="space-y-6">
+      <PageHeader
+        title="Frozen Addresses"
+        description="Block wallet addresses from sending or receiving funds through the payment pipeline."
+        status={status || undefined}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Freeze address</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={freeze} className="grid gap-3 max-w-lg">
+          <form onSubmit={freeze} className="grid gap-4 max-w-lg">
             <div className="space-y-2">
               <Label>Address</Label>
-              <Input value={address} onChange={(e) => setAddress(e.target.value)} required />
+              <Input value={address} onChange={(e) => setAddress(e.target.value)} required className="font-mono text-xs" />
             </div>
             <div className="space-y-2">
               <Label>Reason</Label>
@@ -109,12 +123,18 @@ export default function FrozenAddressesPage() {
               <Label>Order reference</Label>
               <Input value={orderRef} onChange={(e) => setOrderRef(e.target.value)} />
             </div>
-            <Button type="submit">Freeze</Button>
+            <Button type="submit" variant="destructive">
+              Freeze address
+            </Button>
           </form>
         </CardContent>
       </Card>
+
       <Card>
-        <CardContent className="pt-6">
+        <CardHeader>
+          <CardTitle>Currently frozen</CardTitle>
+        </CardHeader>
+        <CardContent>
           <Table>
             <TableHeader>
               <TableRow>

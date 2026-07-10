@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { notify } from "@/lib/notify";
 import { getAuthenticatedClient } from "@/lib/supabase-client";
+import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -20,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
 type FraudRule = {
   id: string;
@@ -40,11 +43,13 @@ export default function FraudRulesPage() {
     const supabase = getAuthenticatedClient();
     if (!supabase) return;
     const { data, error } = await supabase.rpc("compliance_fetch_fraud_rules");
-    if (error) setStatus(error.message);
-    else {
-      setRules((data as FraudRule[]) ?? []);
-      setStatus(`${data?.length ?? 0} rule(s)`);
+    if (error) {
+      notify.error("Could not load fraud rules", { description: error.message });
+      setStatus("");
+      return;
     }
+    setRules((data as FraudRule[]) ?? []);
+    setStatus(`${data?.length ?? 0} rule(s)`);
   }, []);
 
   useEffect(() => {
@@ -63,14 +68,22 @@ export default function FraudRulesPage() {
       p_active: true,
     });
     setSaving(false);
-    if (error) setStatus(error.message);
-    else await load();
+    if (error) {
+      notify.error("Could not save rule", { description: error.message });
+    } else {
+      notify.success("Rule updated");
+      await load();
+    }
   };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Fraud Rules</h1>
-      <p className="text-sm text-muted-foreground">{status}</p>
+    <div className="space-y-6">
+      <PageHeader
+        title="Fraud Rules"
+        description="Configure global velocity and amount thresholds applied before transactions settle."
+        status={status || undefined}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Global thresholds</CardTitle>
@@ -88,19 +101,24 @@ export default function FraudRulesPage() {
             <TableBody>
               {rules.map((rule) => (
                 <TableRow key={rule.id}>
-                  <TableCell>{rule.rule_type}</TableCell>
-                  <TableCell>{rule.threshold_value}</TableCell>
-                  <TableCell>{rule.active ? "yes" : "no"}</TableCell>
+                  <TableCell className="font-mono text-xs">{rule.rule_type}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{rule.threshold_value}</TableCell>
+                  <TableCell>
+                    <Badge variant={rule.active ? "success" : "secondary"}>
+                      {rule.active ? "yes" : "no"}
+                    </Badge>
+                  </TableCell>
                   <TableCell>{rule.merchant_id ? "merchant" : "global"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          <form onSubmit={save} className="flex flex-wrap gap-3 items-end mt-4">
+
+          <form onSubmit={save} className="flex flex-wrap gap-4 items-end mt-6 pt-6 border-t border-border-light">
             <div className="space-y-2">
               <Label>Rule type</Label>
               <Select value={editType} onValueChange={setEditType}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-[200px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -120,7 +138,7 @@ export default function FraudRulesPage() {
               />
             </div>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Update"}
+              {saving ? "Saving…" : "Update rule"}
             </Button>
           </form>
         </CardContent>

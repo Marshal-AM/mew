@@ -1,47 +1,57 @@
-import { View, Text, StyleSheet } from "react-native";
+import { Text, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
+import { AppHeaderLogo } from "@/components/AppHeader";
 import { Button } from "@/components/Button";
-import { colors, spacing } from "@/theme";
+import ScreenContainer from "@/components/ScreenContainer";
+import { useWallet } from "@/context/WalletProvider";
+import { colors, spacing, typography } from "@/theme";
 
 export default function OnboardingIndex() {
   const router = useRouter();
+  const { startupError } = useWallet();
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Moo Wallet</Text>
-      <Text style={styles.subtitle}>
-        Offline-ready Polygon wallet. Your keys stay on this device in secure
-        storage.
-      </Text>
+    <ScreenContainer padTop contentStyle={styles.container}>
+      <View style={styles.content}>
+        <AppHeaderLogo height={72} />
+        <Text style={styles.subtitle}>
+          Your recovery phrase stays encrypted on this device using secure storage.
+        </Text>
+        {startupError ? <Text style={styles.error}>{startupError}</Text> : null}
+      </View>
       <View style={styles.actions}>
         <Button title="Create New Wallet" onPress={() => router.push("/onboarding/create")} />
         <Button
           title="Import Existing Wallet"
-          variant="secondary"
+          variant="outline"
           onPress={() => router.push("/onboarding/import")}
         />
       </View>
-    </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: spacing.lg,
     justifyContent: "center",
   },
-  title: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: colors.text,
-    marginBottom: spacing.sm,
+  content: {
+    alignItems: "center",
+    marginBottom: spacing.xxl,
+    gap: spacing.lg,
   },
   subtitle: {
-    fontSize: 16,
-    color: colors.textMuted,
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: "center",
     lineHeight: 24,
-    marginBottom: spacing.xl,
+    maxWidth: 320,
+  },
+  error: {
+    ...typography.body,
+    color: colors.error,
+    textAlign: "center",
   },
   actions: {
     gap: spacing.md,

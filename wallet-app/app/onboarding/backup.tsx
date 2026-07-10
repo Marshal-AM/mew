@@ -1,17 +1,11 @@
 import { useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
-} from "react-native";
+import { Text, StyleSheet, Pressable, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { Button } from "@/components/Button";
-import { saveMnemonic } from "@/wallet/secureStorage";
-import { useWallet } from "@/context/WalletProvider";
-import { colors, spacing } from "@/theme";
+import Card from "@/components/Card";
+import ScreenContainer from "@/components/ScreenContainer";
+import { colors, spacing, radii, typography } from "@/theme";
 
 export default function BackupPhrase() {
   const { mnemonic, address } = useLocalSearchParams<{
@@ -19,17 +13,14 @@ export default function BackupPhrase() {
     address: string;
   }>();
   const router = useRouter();
-  const { unlockFromMnemonic } = useWallet();
   const [confirmed, setConfirmed] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   if (!mnemonic || !address) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.error}>Missing wallet data. Go back and try again.</Text>
-      </View>
+      <ScreenContainer contentStyle={styles.screen}>
+        <Text style={styles.errorText}>Missing wallet data. Go back and try again.</Text>
+      </ScreenContainer>
     );
   }
 
@@ -41,28 +32,25 @@ export default function BackupPhrase() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleContinue = async () => {
+  const handleContinue = () => {
     if (!confirmed) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await saveMnemonic(mnemonic);
-      unlockFromMnemonic(mnemonic);
-      router.replace("/(tabs)/wallet");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save wallet");
-    } finally {
-      setSaving(false);
-    }
+    router.push({
+      pathname: "/onboarding/kyc",
+      params: { mnemonic, address },
+    });
   };
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
-      <Text style={styles.warning}>
-        Write these 12 words down in order. Never share them. Anyone with this
-        phrase controls your wallet.
-      </Text>
+    <ScreenContainer scroll contentStyle={styles.container}>
+      <Card style={styles.warningCard}>
+        <Text style={styles.warningText}>
+          Write these 12 words down in order. Never share them. Anyone with this phrase
+          controls your wallet.
+        </Text>
+      </Card>
+
       <Text style={styles.address}>Address: {address}</Text>
+
       <View style={styles.grid}>
         {words.map((word, i) => (
           <View key={i} style={styles.wordCell}>
@@ -71,15 +59,14 @@ export default function BackupPhrase() {
           </View>
         ))}
       </View>
+
       <Button
         title={copied ? "Copied!" : "Copy Phrase"}
         variant="secondary"
         onPress={handleCopy}
       />
-      <Pressable
-        style={styles.checkboxRow}
-        onPress={() => setConfirmed((v) => !v)}
-      >
+
+      <Pressable style={styles.checkboxRow} onPress={() => setConfirmed((v) => !v)}>
         <View style={[styles.checkbox, confirmed && styles.checkboxChecked]}>
           {confirmed ? <Text style={styles.checkmark}>✓</Text> : null}
         </View>
@@ -87,28 +74,30 @@ export default function BackupPhrase() {
           I have written down my recovery phrase and stored it safely
         </Text>
       </Pressable>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+
       <Button
-        title="Continue to Wallet"
+        title="Continue to Verification"
         onPress={handleContinue}
         disabled={!confirmed}
-        loading={saving}
       />
-    </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: colors.background },
-  container: { padding: spacing.lg, gap: spacing.md },
-  warning: {
+  screen: { paddingTop: spacing.md },
+  container: { gap: spacing.md, paddingTop: spacing.md },
+  warningCard: {
+    backgroundColor: colors.warningSoft,
+    borderColor: colors.warning,
+  },
+  warningText: {
+    ...typography.body,
     color: colors.warning,
-    fontSize: 14,
-    lineHeight: 20,
   },
   address: {
+    ...typography.caption,
     color: colors.textMuted,
-    fontSize: 13,
     fontFamily: "monospace",
   },
   grid: {
@@ -122,18 +111,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.surface,
     padding: spacing.sm,
-    borderRadius: 8,
+    borderRadius: radii.sm,
     gap: spacing.sm,
   },
   wordIndex: {
+    ...typography.caption,
     color: colors.textMuted,
-    fontSize: 12,
     width: 20,
   },
   word: {
+    ...typography.bodyMedium,
     color: colors.text,
-    fontSize: 15,
-    fontWeight: "500",
   },
   checkboxRow: {
     flexDirection: "row",
@@ -144,29 +132,28 @@ const styles = StyleSheet.create({
   checkbox: {
     width: 24,
     height: 24,
-    borderRadius: 6,
+    borderRadius: radii.sm,
     borderWidth: 2,
     borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
   },
   checkboxChecked: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   checkmark: {
-    color: colors.text,
+    color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: "700",
   },
   checkboxLabel: {
     flex: 1,
+    ...typography.body,
     color: colors.text,
-    fontSize: 14,
-    lineHeight: 20,
   },
-  error: {
+  errorText: {
+    ...typography.body,
     color: colors.error,
-    fontSize: 14,
   },
 });

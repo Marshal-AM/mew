@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Button } from "@/components/Button";
+import Card from "@/components/Card";
+import ScreenContainer from "@/components/ScreenContainer";
 import { createWallet } from "@/wallet/walletService";
-import { colors, spacing } from "@/theme";
+import { colors, spacing, radii, typography } from "@/theme";
 
 export default function CreateWallet() {
   const router = useRouter();
@@ -27,37 +29,42 @@ export default function CreateWallet() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>Generate a new wallet</Text>
-      <Text style={styles.body}>
-        A 12-word recovery phrase will be created. You must back it up before
-        using the wallet — it is the only way to recover your funds.
-      </Text>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Button title="Generate Recovery Phrase" onPress={handleCreate} loading={loading} />
-    </View>
+    <ScreenContainer contentStyle={styles.content}>
+      <Card>
+        <Text style={styles.heading}>Generate a new wallet</Text>
+        <Text style={styles.body}>
+          A 12-word recovery phrase will be created on-device. You must back it up and
+          complete identity verification before using the wallet.
+        </Text>
+        {error ? (
+          <Text style={styles.errorText}>{error}</Text>
+        ) : null}
+        <Button title="Generate Recovery Phrase" onPress={handleCreate} loading={loading} />
+      </Card>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: spacing.lg,
+  content: {
+    paddingTop: spacing.md,
   },
   heading: {
-    fontSize: 22,
-    fontWeight: "600",
+    ...typography.h2,
     color: colors.text,
     marginBottom: spacing.md,
   },
   body: {
-    fontSize: 15,
-    color: colors.textMuted,
-    lineHeight: 22,
+    ...typography.body,
+    color: colors.textSecondary,
     marginBottom: spacing.xl,
   },
-  error: {
+  errorText: {
+    ...typography.body,
     color: colors.error,
+    backgroundColor: colors.errorSoft,
+    borderRadius: radii.sm,
+    padding: spacing.md,
     marginBottom: spacing.md,
   },
 });

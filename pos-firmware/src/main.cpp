@@ -73,7 +73,13 @@ void loop() {
   productCatalogLoop();
 
 #if defined(AUDIO_ENABLE)
-  audioLoop();
+  if (audioVoiceIsRecording()) {
+    for (int i = 0; i < 8; i++) {
+      audioLoop();
+    }
+  } else {
+    audioLoop();
+  }
 
   if (Serial.available() > 0) {
     char cmd = (char)Serial.read();
@@ -131,5 +137,13 @@ void loop() {
     uiHandleKey(&ui, event);
   }
 
+#if defined(AUDIO_ENABLE)
+  if (audioVoiceIsRecording()) {
+    delay(1);
+  } else {
+    delay(10);
+  }
+#else
   delay(10);
+#endif
 }

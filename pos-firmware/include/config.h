@@ -57,13 +57,17 @@ static const uint8_t KEYPAD_COLS = 4;
 #define I2S_SPK_WS_PIN 11
 #define I2S_SPK_DIN_PIN 12
 #define AUDIO_LOOPBACK_DEFAULT_SEC 2
-#define AUDIO_LOOPBACK_CHUNK_SAMPLES 512
+#define AUDIO_LOOPBACK_CHUNK_SAMPLES 1024
+#define AUDIO_I2S_BUFFER_SAMPLES 1024
 #define AUDIO_MIC_SIGNAL_PEAK_THRESHOLD 400
 #define AUDIO_MIC_STATUS_LOG_INTERVAL_MS 5000
 // INMP441 on this board delivers audio on the I2S RIGHT slot (deep_diag verified).
 #define AUDIO_MIC_PCM_SHIFT 14
 // Boost monitor/playback so speech is audible on the MAX98357A.
 #define AUDIO_MONITOR_GAIN 4
+// Scale voice playback so recorded speech matches speaker-test loudness.
+#define AUDIO_VOICE_PLAYBACK_TARGET_PEAK 26000
+#define AUDIO_VOICE_PLAYBACK_MIN_PEAK 64
 #define AUDIO_VOICE_RECORD_MAX_SEC 4
 #define AUDIO_VOICE_MAX_SAMPLES (AUDIO_SAMPLE_RATE_HZ * AUDIO_VOICE_RECORD_MAX_SEC)
 #define AUDIO_VOICE_LOG_INTERVAL_MS 1000

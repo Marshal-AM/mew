@@ -9,6 +9,7 @@
     "test:pipeline": "node scripts/test-pipeline.mjs",
     "test:screening": "node scripts/test-screening.mjs",
     "test:fraud": "node scripts/test-fraud.mjs",
+    "test:voice": "node scripts/test-voice-query.mjs",
     "db:reset": "supabase db reset"
   },
   "devDependencies": {

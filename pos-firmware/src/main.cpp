@@ -61,7 +61,7 @@ void setup() {
 
 #if defined(AUDIO_ENABLE)
   if (audioInit()) {
-    Serial.println("Audio ready. Keypad A=record B=play C=speaker test. Serial: P/D/M/L/S");
+    Serial.println("Audio ready. Keypad A=record B=send voice. Serial: P/D/M/L/S/C");
   } else {
     Serial.println("[AUDIO] init failed — check I2S wiring");
   }

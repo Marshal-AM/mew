@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "display.h"
+#include "voice_client.h"
 
 #include <Arduino.h>
 
@@ -1117,6 +1118,21 @@ static void applyVoicePlaybackGain(int16_t* buf, size_t samples, uint32_t source
   }
 }
 
+/** Deepgram TTS — passthrough with light noise gate, no gain boost. */
+static void prepareAgentPlaybackChunk(int16_t* buf, size_t samples) {
+  if (buf == nullptr || samples == 0) {
+    return;
+  }
+
+  constexpr int16_t kNoiseGate = 150;
+  for (size_t i = 0; i < samples; i++) {
+    if (buf[i] > kNoiseGate || buf[i] < -kNoiseGate) {
+      continue;
+    }
+    buf[i] = 0;
+  }
+}
+
 static void audioVoiceRecordPump() {
   if (!voice_recording || voice_buffer == nullptr) {
     return;
@@ -1197,8 +1213,8 @@ void audioVoiceStartRecord() {
   voice_last_log_ms = voice_record_started_ms;
   drainMic(128);
 
-  Serial.println("[VOICE] RECORD START — speak into mic (press B to play back)");
-  showVoiceStatusScreen("Recording…", "Press B to play");
+  Serial.println("[VOICE] RECORD START — speak into mic (press B to send)");
+  showVoiceStatusScreen("Recording…", "Press B to send");
   Serial.printf("[VOICE] max duration %.1f s (%u samples)\n",
       (float)AUDIO_VOICE_RECORD_MAX_SEC,
       (unsigned)AUDIO_VOICE_MAX_SAMPLES);
@@ -1237,45 +1253,80 @@ void audioVoicePlayRecorded() {
         (unsigned)voice_record_peak);
   }
 
-  float seconds = (float)voice_recorded_samples / (float)AUDIO_SAMPLE_RATE_HZ;
-  Serial.printf("[VOICE] PLAYBACK START — %u samples (%.2f s, normalize to peak %u)\n",
-      (unsigned)voice_recorded_samples,
-      seconds,
-      (unsigned)AUDIO_VOICE_PLAYBACK_TARGET_PEAK);
-  showVoiceStatusScreen("Playing…", "Voice playback");
+  showVoiceStatusScreen("Thinking…", "Ask AI");
 
+  VoiceUploadResponse upload = {};
+  char upload_err[128] = {};
+  VoiceUploadResult upload_result = voiceUploadWav(
+      voice_buffer,
+      voice_recorded_samples,
+      POS_ID,
+      &upload,
+      nullptr,
+      0,
+      upload_err,
+      sizeof(upload_err));
+
+  if (upload_result != VOICE_UPLOAD_OK) {
+    Serial.printf(
+        "[VOICE] UPLOAD FAIL — %s: %s\n",
+        voiceUploadResultText(upload_result),
+        upload_err);
+    showVoiceStatusScreen("Upload failed", upload_err);
+    delay(2500);
+    showProductSelectScreen();
+    return;
+  }
+
+  Serial.printf(
+      "[VOICE] UPLOAD OK — reply %u samples (%u ms)\n",
+      (unsigned)upload.pcm_samples,
+      (unsigned)upload.duration_ms);
+  if (upload.reply_text[0] != '\0') {
+    Serial.printf("[VOICE] reply: %s\n", upload.reply_text);
+  }
+
+  if (upload.pcm_samples == 0 || upload.pcm == nullptr) {
+    const char* text_only = upload.reply_text[0] != '\0' ? upload.reply_text : "Text reply only";
+    showVoiceStatusScreen("Reply ready", text_only);
+    voiceUploadResponseFree(&upload);
+    delay(3000);
+    showProductSelectScreen();
+    return;
+  }
+
+  const char* play_subtitle = upload.reply_text[0] != '\0' ? upload.reply_text : "AI reply";
+  showVoiceStatusScreen("Playing…", play_subtitle);
+
+  drainMic(512);
   beginSpeakerPlayback();
   voice_playing = true;
+
+  MicLevelStats echo_stats = {};
+  statsFromPcm(&echo_stats, upload.pcm, upload.pcm_samples);
+  Serial.printf("[VOICE] agent audio peak=%u samples=%u\n",
+      (unsigned)echo_stats.peak,
+      (unsigned)upload.pcm_samples);
+
+  static int16_t play_chunk[AUDIO_I2S_BUFFER_SAMPLES];
   size_t played = 0;
-  static int16_t play_chunk[256];
-  uint32_t play_peak = 0;
-
-  while (played < voice_recorded_samples) {
-    size_t n = voice_recorded_samples - played;
-    if (n > sizeof(play_chunk) / sizeof(play_chunk[0])) {
-      n = sizeof(play_chunk) / sizeof(play_chunk[0]);
+  while (played < upload.pcm_samples) {
+    size_t n = upload.pcm_samples - played;
+    if (n > AUDIO_I2S_BUFFER_SAMPLES) {
+      n = AUDIO_I2S_BUFFER_SAMPLES;
     }
-
-    memcpy(play_chunk, voice_buffer + played, n * sizeof(int16_t));
-    applyVoicePlaybackGain(play_chunk, n, voice_record_peak);
-
-    for (size_t i = 0; i < n; i++) {
-      int32_t a = play_chunk[i] < 0 ? -play_chunk[i] : play_chunk[i];
-      if ((uint32_t)a > play_peak) {
-        play_peak = (uint32_t)a;
-      }
-    }
-
-    if (!audioPlayMono16k(play_chunk, n)) {
-      Serial.printf("[VOICE] PLAYBACK FAIL at sample %u\n", (unsigned)played);
-      voice_playing = false;
-      return;
+    memcpy(play_chunk, upload.pcm + played, n * sizeof(int16_t));
+    prepareAgentPlaybackChunk(play_chunk, n);
+    if (!audioPlayMono16k(play_chunk, n, false)) {
+      Serial.printf("[VOICE] ECHO PLAYBACK FAIL at sample %u\n", (unsigned)played);
+      break;
     }
     played += n;
   }
 
   voice_playing = false;
-  Serial.printf("[VOICE] PLAYBACK DONE — peak=%u\n", (unsigned)play_peak);
+  voiceUploadResponseFree(&upload);
+  Serial.println("[VOICE] ECHO PLAYBACK DONE");
   showProductSelectScreen();
 }
 
@@ -1327,7 +1378,7 @@ bool audioRecordMono16k(int16_t* buf, size_t samples) {
   return readMicChunk(buf, samples, nullptr);
 }
 
-bool audioPlayMono16k(const int16_t* buf, size_t samples) {
+bool audioPlayMono16k(const int16_t* buf, size_t samples, bool drain_mic) {
   if (!audio_ready || buf == nullptr || samples == 0) {
     return false;
   }
@@ -1356,7 +1407,9 @@ bool audioPlayMono16k(const int16_t* buf, size_t samples) {
 
     size_t samples_written = bytes_written / sizeof(int16_t);
     played += samples_written;
-    drainMic(samples_written);
+    if (drain_mic) {
+      drainMic(samples_written);
+    }
   }
 
   return true;
@@ -1559,9 +1612,10 @@ bool audioRecordMono16k(int16_t* buf, size_t samples) {
   return false;
 }
 
-bool audioPlayMono16k(const int16_t* buf, size_t samples) {
+bool audioPlayMono16k(const int16_t* buf, size_t samples, bool drain_mic) {
   (void)buf;
   (void)samples;
+  (void)drain_mic;
   return false;
 }
 

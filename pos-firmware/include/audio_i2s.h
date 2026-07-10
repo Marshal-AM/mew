@@ -9,7 +9,7 @@ bool audioInit();
 void audioLoop();
 bool audioIsReady();
 bool audioRecordMono16k(int16_t* buf, size_t samples);
-bool audioPlayMono16k(const int16_t* buf, size_t samples);
+bool audioPlayMono16k(const int16_t* buf, size_t samples, bool drain_mic = true);
 bool audioLoopbackTest(uint32_t seconds);
 /** Sample mic for duration_ms and log peak/mean/signal status to Serial. */
 bool audioProbeMic(uint32_t duration_ms);

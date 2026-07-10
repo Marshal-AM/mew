@@ -65,9 +65,13 @@ static const uint8_t KEYPAD_COLS = 4;
 #define AUDIO_MIC_PCM_SHIFT 14
 // Boost monitor/playback so speech is audible on the MAX98357A.
 #define AUDIO_MONITOR_GAIN 4
-// Scale voice playback so recorded speech matches speaker-test loudness.
+// Loopback / recorded voice — normalize quiet mic captures.
 #define AUDIO_VOICE_PLAYBACK_TARGET_PEAK 26000
 #define AUDIO_VOICE_PLAYBACK_MIN_PEAK 64
+// Agent TTS from Deepgram is already leveled — cap gain so noise is not blasted.
+#define AUDIO_AGENT_PLAYBACK_TARGET_PEAK 24000
+#define AUDIO_AGENT_PLAYBACK_MIN_PEAK 4000
+#define AUDIO_AGENT_PLAYBACK_MAX_GAIN 3
 #define AUDIO_VOICE_RECORD_MAX_SEC 4
 #define AUDIO_VOICE_MAX_SAMPLES (AUDIO_SAMPLE_RATE_HZ * AUDIO_VOICE_RECORD_MAX_SEC)
 #define AUDIO_VOICE_LOG_INTERVAL_MS 1000

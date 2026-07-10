@@ -62,7 +62,7 @@ KeyEvent keypadPoll() {
   }
 
   if (key == 'B' || key == 'b') {
-    Serial.println("[KEYPAD] pressed 'B' (play voice recording)");
+    Serial.println("[KEYPAD] pressed 'B' (stop record + upload voice)");
     return {KEY_ACTION_B, 'B'};
   }
 

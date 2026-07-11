@@ -21,7 +21,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   }
 }
 
-rootProject.name = 'Moo Wallet'
+rootProject.name = 'MooPay'
 
 dependencyResolutionManagement {
   versionCatalogs {

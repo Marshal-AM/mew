@@ -44,7 +44,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     package: "com.moo.wallet",
     adaptiveIcon: {
-      foregroundImage: "./assets/adaptive-icon.png",
+      foregroundImage: "./assets/icon.png",
       backgroundColor: "#ffffff",
     },
     permissions: [

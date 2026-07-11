@@ -2,6 +2,7 @@ import type { TokenBalance } from "@/chain/balances";
 
 /** Hardcoded display rates: 1 token → AED (portfolio summary only). */
 export const TOKEN_AED_RATES = {
+  AE: 1,
   MOO: 1,
   POL: 0.85,
 } as const;

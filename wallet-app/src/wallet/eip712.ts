@@ -19,8 +19,8 @@ export const TRANSFER_TYPES: Record<string, { name: string; type: string }[]> = 
   ],
 };
 
-export const MOO_TOKEN_ADDRESS = deployments.testToken;
-export const MOO_DECIMALS = 6;
+export const PAYMENT_TOKEN_ADDRESS = deployments.aeCoin;
+export const PAYMENT_TOKEN_DECIMALS = 6;
 
 export type TransferMessage = {
   token: string;
@@ -60,11 +60,11 @@ export async function buildTransferMessage(
     throw new Error("Payment request has expired");
   }
 
-  const value = parseUnits(request.amt, MOO_DECIMALS);
+  const value = parseUnits(request.amt, PAYMENT_TOKEN_DECIMALS);
   const authNonce = nonce ?? (await randomBytes32());
 
   return {
-    token: MOO_TOKEN_ADDRESS,
+    token: PAYMENT_TOKEN_ADDRESS,
     from,
     to,
     value,

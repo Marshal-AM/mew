@@ -35,6 +35,7 @@ function truncateAddress(addr: string): string {
 
 function tokenAccent(symbol: string): string {
   if (symbol === "POL") return colors.secondary;
+  if (symbol === "AE") return "#E8A317";
   if (symbol === "MOO") return colors.primary;
   return colors.textMuted;
 }

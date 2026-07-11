@@ -7,5 +7,9 @@
   "deployedAt": "2026-07-07T05:55:00.000Z",
   "note": "paymentForwarder is the new universal forwarder; testToken is the legacy PayToken (plain ERC-20, use with forwarder after approve)",
   "forwarderExplorerUrl": "https://amoy.polygonscan.com/address/0x9F0BF4aE6BBfD51eDbff77eA0D17A7bec484bb97",
-  "testTokenExplorerUrl": "https://amoy.polygonscan.com/address/0x26D215752f68bc2254186F9f6FF068b8C4BdFd37"
+  "testTokenExplorerUrl": "https://amoy.polygonscan.com/address/0x26D215752f68bc2254186F9f6FF068b8C4BdFd37",
+  "aeCoin": "0x0866f40D55E96b2D74995203Caff032aD81c14B0",
+  "aeCoinExplorerUrl": "https://amoy.polygonscan.com/address/0x0866f40D55E96b2D74995203Caff032aD81c14B0",
+  "aeCoinMintedTo": "0xC54E102d2343138114774868c5810B3262E89512",
+  "aeCoinMintedAmount": "100"
 }

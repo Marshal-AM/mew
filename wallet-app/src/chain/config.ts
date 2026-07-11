@@ -20,6 +20,12 @@ export type TokenConfig =
 export const TOKENS: TokenConfig[] = [
   { symbol: "POL", decimals: 18, native: true },
   {
+    symbol: "AE",
+    decimals: 6,
+    native: false,
+    address: deployments.aeCoin,
+  },
+  {
     symbol: "MOO",
     decimals: 6,
     native: false,

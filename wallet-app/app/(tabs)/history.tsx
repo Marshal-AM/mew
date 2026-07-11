@@ -88,7 +88,7 @@ export default function HistoryScreen() {
           >
             {statusLabel(item.status)}
           </Text>
-          <Text style={styles.mono}>{formatUnits(item.value, 6)} MOO</Text>
+          <Text style={styles.mono}>{formatUnits(item.value, 6)} AE</Text>
           <Text style={styles.mono}>posId: {item.posId}</Text>
           <Text style={styles.mono}>reqId: {item.reqId}</Text>
           <Text style={styles.mono}>to: {item.to}</Text>

@@ -18,7 +18,7 @@ import {
   SIGN_TEST_MESSAGE,
   verifySignature,
 } from "../wallet/walletService";
-import { buildTransferMessage, getForwarderDomain, MOO_TOKEN_ADDRESS } from "../wallet/eip712";
+import { buildTransferMessage, getForwarderDomain, PAYMENT_TOKEN_ADDRESS } from "../wallet/eip712";
 import type { PaymentRequest } from "../protocol/paymentRequest";
 import {
   buildSignedPaymentPayload,
@@ -182,13 +182,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const result = await ensureTokenAllowance(wallet, MOO_TOKEN_ADDRESS, PAYMENT_FORWARDER, 1n);
+      const result = await ensureTokenAllowance(wallet, PAYMENT_TOKEN_ADDRESS, PAYMENT_FORWARDER, 1n);
       if (result.approved) {
-        const message = `Approved MOO for forwarder (${result.txHash?.slice(0, 14)}...).`;
+        const message = `Approved AE for forwarder (${result.txHash?.slice(0, 14)}...).`;
         console.log(`[MooWallet] ${message}`);
         setApprovalStatus(message);
       } else {
-        const message = "MOO forwarder approval already present.";
+        const message = "AE forwarder approval already present.";
         console.log(`[MooWallet] ${message}`);
         setApprovalStatus(message);
       }

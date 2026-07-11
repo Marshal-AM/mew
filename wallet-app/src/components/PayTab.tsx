@@ -1,5 +1,5 @@
-﻿import React, { useEffect, useState } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+﻿import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Network from "expo-network";
 import { Device } from "react-native-ble-plx";
@@ -8,24 +8,32 @@ import Button from "@/components/Button";
 import Card from "@/components/Card";
 import ScreenContainer from "@/components/ScreenContainer";
 import { colors, spacing, radii, typography } from "@/theme";
-import { getTextInputStyle } from "@/components/Input";
 import { parsePaymentRequestJson, PaymentRequest } from "@/protocol/paymentRequest";
 import { serializeSignedPayment } from "@/protocol/signedPayment";
-import { requestBlePermissions, scanForPosDevice, waitForPoweredOn } from "@/ble/BleManager";
+import {
+  connectToPos as gattConnectToPos,
+  requestBlePermissions,
+  scanForPosDevice,
+  waitForPoweredOn,
+} from "@/ble/BleManager";
 import { requestPosInfo, sendSignedPayment, TransferProgress } from "@/ble/transfer";
-import { fetchPosDevice, getPayoutAddress, truncateAddress } from "@/cache/posRegistry";
+import { truncateAddress } from "@/cache/posRegistry";
 import { addPendingPayment, listPendingPayments, updatePendingStatus } from "@/cache/pendingPayments";
-import { MOO_DECIMALS, MOO_TOKEN_ADDRESS } from "@/wallet/eip712";
+import { PAYMENT_TOKEN_DECIMALS, PAYMENT_TOKEN_ADDRESS } from "@/wallet/eip712";
 import { getTokenAllowance } from "@/chain/allowances";
 import { PAYMENT_FORWARDER } from "@/chain/config";
 import { useWallet } from "@/context/WalletProvider";
 import { payFlowLog } from "@/logging/payFlow";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function PayTab() {
   const { state, address, signPaymentAuthorization, syncTransactions } = useWallet();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
-  const [manualPosId, setManualPosId] = useState("POS-001");
+  const [autoConnecting, setAutoConnecting] = useState(false);
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
   const [payoutAddress, setPayoutAddress] = useState<string | null>(null);
   const [payoutError, setPayoutError] = useState<string | null>(null);
@@ -37,6 +45,7 @@ export default function PayTab() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [allowanceOk, setAllowanceOk] = useState<boolean | null>(null);
   const [allowanceMessage, setAllowanceMessage] = useState<string | null>(null);
+  const lastHandledKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!pendingId) return;
@@ -69,60 +78,42 @@ export default function PayTab() {
     })();
   }, [permission?.granted, requestPermission]);
 
-  const resolvePayoutFromRegistry = async (posId: string) => {
-    payFlowLog.info("Registry", "resolve payout from registry", { posId });
-    let payout: string;
-    try {
-      payout = await getPayoutAddress(posId);
-      setPayoutSource("cached");
-      payFlowLog.info("Registry", "payout loaded from cache", { posId, payout });
-    } catch {
-      payFlowLog.warn("Registry", "cache miss, fetching remote registry", { posId });
-      const fetched = await fetchPosDevice(posId);
-      if (!fetched) {
-        throw new Error(`No payout address for ${posId}. Connect to POS over BLE or set a manual mapping in Settings.`);
-      }
-      payout = fetched;
-      setPayoutSource("synced");
-      payFlowLog.info("Registry", "payout loaded from remote sync", { posId, payout });
+  const ensurePermissions = async (): Promise<void> => {
+    const bleOk = await requestBlePermissions();
+    if (!bleOk) {
+      throw new Error("Bluetooth permissions are required to connect to the POS device.");
     }
-    setPayoutAddress(payout);
-    setPayoutError(null);
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        throw new Error("Camera permission is required to scan POS QR codes.");
+      }
+    }
   };
 
-  const resolvePayout = async (posId: string, connectedDevice?: Device | null) => {
+  const resolvePayout = async (posId: string, connectedDevice: Device) => {
     payFlowLog.info("Pay", "resolve payout start", {
       posId,
-      hasDevice: !!connectedDevice,
-      deviceId: connectedDevice?.id,
+      deviceId: connectedDevice.id,
     });
     try {
-      if (connectedDevice) {
-        try {
-          payFlowLog.info("Pay", "requesting payout over BLE");
-          const info = await requestPosInfo(connectedDevice);
-          if (info.posId && info.posId !== posId) {
-            throw new Error(`POS identity mismatch (${info.posId})`);
-          }
-          setPayoutAddress(info.payoutAddress);
-          setPayoutSource("ble");
-          setPayoutError(null);
-          payFlowLog.info("Pay", "payout resolved over BLE", info);
-          return;
-        } catch (bleErr) {
-          payFlowLog.warn("Pay", "BLE payout lookup failed, trying registry fallback", bleErr);
-          setPayoutError(
-            bleErr instanceof Error ? bleErr.message : "BLE payout lookup failed"
-          );
-        }
+      setStatus("Fetching payee over BLE...");
+      payFlowLog.info("Pay", "requesting payout over BLE");
+      const info = await requestPosInfo(connectedDevice);
+      if (info.posId && info.posId !== posId) {
+        throw new Error(`POS identity mismatch (${info.posId})`);
       }
-      await resolvePayoutFromRegistry(posId);
-      payFlowLog.info("Pay", "payout resolved from registry fallback", { posId, payoutSource });
+      setPayoutAddress(info.payoutAddress);
+      setPayoutSource("ble");
+      setPayoutError(null);
+      payFlowLog.info("Pay", "payout resolved over BLE", info);
     } catch (err) {
       setPayoutAddress(null);
-      const message = err instanceof Error ? err.message : "Payout address not configured";
+      const message =
+        err instanceof Error ? err.message : "Could not load payee from POS over BLE";
       setPayoutError(message);
       payFlowLog.error("Pay", "resolve payout failed", message);
+      throw err;
     }
   };
 
@@ -145,20 +136,20 @@ export default function PayTab() {
     try {
       payFlowLog.info("Allowance", "checking", {
         owner: address,
-        token: MOO_TOKEN_ADDRESS,
+        token: PAYMENT_TOKEN_ADDRESS,
         spender: PAYMENT_FORWARDER,
         amount: paymentRequest?.amt,
       });
-      const allowance = await getTokenAllowance(address, MOO_TOKEN_ADDRESS, PAYMENT_FORWARDER);
+      const allowance = await getTokenAllowance(address, PAYMENT_TOKEN_ADDRESS, PAYMENT_FORWARDER);
       if (paymentRequest) {
-        const needed = parseUnits(paymentRequest.amt, MOO_DECIMALS);
+        const needed = parseUnits(paymentRequest.amt, PAYMENT_TOKEN_DECIMALS);
         payFlowLog.info("Allowance", "result", {
-          allowance: formatUnits(allowance, MOO_DECIMALS),
+          allowance: formatUnits(allowance, PAYMENT_TOKEN_DECIMALS),
           needed: paymentRequest.amt,
         });
         if (allowance < needed) {
           setAllowanceOk(false);
-          const message = `Insufficient MOO allowance for PaymentForwarder. Approve MOO while online (current: ${formatUnits(allowance, MOO_DECIMALS)}).`;
+          const message = `Insufficient AE allowance for PaymentForwarder. Approve AE while online (current: ${formatUnits(allowance, PAYMENT_TOKEN_DECIMALS)}).`;
           setAllowanceMessage(message);
           payFlowLog.warn("Allowance", "insufficient", message);
           return;
@@ -169,7 +160,7 @@ export default function PayTab() {
       payFlowLog.info("Allowance", "ok");
     } catch (err) {
       setAllowanceOk(null);
-      setAllowanceMessage("Could not verify MOO allowance right now.");
+      setAllowanceMessage("Could not verify AE allowance right now.");
       payFlowLog.warn("Allowance", "check failed", err);
     }
   };
@@ -180,45 +171,74 @@ export default function PayTab() {
     }
   }, [paymentRequest, address]);
 
-  const connectToPos = async (posId: string) => {
-    setBusy(true);
-    setStatus("Waiting for Bluetooth...");
+  const connectToPosOnce = async (posId: string): Promise<void> => {
     setPendingId(null);
     payFlowLog.info("Pay", "connect to POS start", { posId });
+
+    await waitForPoweredOn();
+    setStatus(`Scanning BLE for ${posId}...`);
+    const found = await scanForPosDevice(posId, 15000);
+
+    setStatus("Connecting to POS...");
+    const connected = await gattConnectToPos(found);
+    setDevice(connected);
+
+    const deviceLabel = connected.localName ?? connected.name ?? connected.id;
+    payFlowLog.info("Pay", "GATT connected", { posId, deviceId: connected.id, name: deviceLabel });
+
+    await resolvePayout(posId, connected);
+
+    setStatus("Ready to pay");
+    payFlowLog.info("Pay", "connect to POS complete", { posId, deviceId: connected.id });
+  };
+
+  const connectToPos = async (posId: string) => {
+    setAutoConnecting(true);
+    payFlowLog.info("Pay", "connect to POS attempt", { posId });
     try {
-      await waitForPoweredOn();
-      setStatus(`Scanning for ${posId}...`);
-      const found = await scanForPosDevice(posId);
-      setDevice(found);
-      const deviceLabel = found.localName ?? found.name ?? found.id;
-      setStatus(`Connected to ${deviceLabel}`);
-      payFlowLog.info("Pay", "device selected", { posId, deviceId: found.id, name: deviceLabel });
-      await resolvePayout(posId, found);
-      payFlowLog.info("Pay", "connect to POS complete", { posId, deviceId: found.id });
+      try {
+        await connectToPosOnce(posId);
+      } catch (firstErr) {
+        payFlowLog.warn("Pay", "connect failed, retrying in 2s", firstErr);
+        setStatus("Retrying BLE connection...");
+        setDevice(null);
+        await sleep(2000);
+        await connectToPosOnce(posId);
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "BLE scan failed";
+      const message = err instanceof Error ? err.message : "BLE connection failed";
       setStatus(message);
       setDevice(null);
       payFlowLog.error("Pay", "connect to POS failed", message);
     } finally {
-      setBusy(false);
+      setAutoConnecting(false);
     }
   };
 
   const handleBarcode = async (data: string) => {
-    if (scanning) return;
+    if (scanning || busy || autoConnecting) return;
     setScanning(true);
     payFlowLog.info("Pay", "QR scanned", data.length > 120 ? `${data.slice(0, 120)}...` : data);
     try {
+      await ensurePermissions();
+
       const parsed = parsePaymentRequestJson(data);
+      const requestKey = `${parsed.reqId}:${parsed.posNonce}`;
+      if (lastHandledKeyRef.current === requestKey && paymentRequest) {
+        payFlowLog.info("Pay", "duplicate QR ignored", { requestKey });
+        return;
+      }
+      lastHandledKeyRef.current = requestKey;
+
       const now = Math.floor(Date.now() / 1000);
       payFlowLog.info("Pay", "QR parsed", { ...parsed, now, ttlRemainingSec: parsed.exp - now });
       if (parsed.exp <= now) {
         throw new Error("Payment request has expired. Ask the merchant to generate a new QR.");
       }
+
       setPaymentRequest(parsed);
-      setManualPosId(parsed.posId);
-      setStatus(`Parsed request for ${parsed.posId} (${parsed.amt} MOO)`);
+      setStatus(`Parsed request for ${parsed.posId} (${parsed.amt} AE)`);
+
       await connectToPos(parsed.posId);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid QR payload";
@@ -231,13 +251,14 @@ export default function PayTab() {
 
   const payBlockers: string[] = [];
   if (state !== "unlocked") payBlockers.push("wallet locked");
-  if (busy) payBlockers.push("busy");
+  if (busy || autoConnecting) payBlockers.push("busy");
   if (!device) payBlockers.push("BLE not connected");
   if (!paymentRequest) payBlockers.push("no payment request");
   if (!payoutAddress) payBlockers.push("payee address missing");
-  if (allowanceOk === false) payBlockers.push("MOO allowance too low");
+  if (allowanceOk === false) payBlockers.push("AE allowance too low");
 
   const canPay = payBlockers.length === 0;
+  const cameraPaused = scanning || busy || autoConnecting;
 
   useEffect(() => {
     if (!paymentRequest) return;
@@ -250,8 +271,9 @@ export default function PayTab() {
       allowanceOk,
       deviceId: device?.id ?? null,
       busy,
+      autoConnecting,
     });
-  }, [paymentRequest, canPay, payBlockers.join("|"), payoutAddress, payoutSource, payoutError, allowanceOk, device?.id, busy]);
+  }, [paymentRequest, canPay, payBlockers.join("|"), payoutAddress, payoutSource, payoutError, allowanceOk, device?.id, busy, autoConnecting]);
 
   const handleConfirmPay = async () => {
     if (!device || !paymentRequest || !payoutAddress) {
@@ -375,8 +397,8 @@ export default function PayTab() {
     <ScreenContainer scroll contentStyle={styles.content}>
       <Text style={styles.title}>Pay</Text>
       <Text style={styles.body}>
-        Scan the POS QR, confirm amount and payee, then tap pay. Status stays pending until
-        on-chain settlement.
+        Scan the POS QR code. The app connects to the device over BLE automatically and loads
+        the payment details from the terminal.
       </Text>
 
       {permission?.granted ? (
@@ -385,33 +407,16 @@ export default function PayTab() {
             style={styles.camera}
             facing="back"
             barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-            onBarcodeScanned={scanning ? undefined : ({ data }) => void handleBarcode(data)}
+            onBarcodeScanned={cameraPaused ? undefined : ({ data }) => void handleBarcode(data)}
           />
         </View>
       ) : (
         <Button title="Grant Camera Permission" onPress={() => void requestPermission()} />
       )}
 
-      <Card title="Manual posId">
-        <TextInput
-          value={manualPosId}
-          onChangeText={setManualPosId}
-          style={[getTextInputStyle(false), styles.inputSpacing]}
-          autoCapitalize="characters"
-          placeholderTextColor={colors.textMuted}
-        />
-        <Button
-          title={busy ? "Connecting..." : "Connect BLE"}
-          disabled={busy || manualPosId.trim().length === 0}
-          onPress={async () => {
-            await connectToPos(manualPosId.trim());
-          }}
-        />
-      </Card>
-
       {paymentRequest ? (
         <Card title="Confirm payment">
-          <Text style={styles.amount}>{paymentRequest.amt} MOO</Text>
+          <Text style={styles.amount}>{paymentRequest.amt} AE</Text>
           {payoutAddress ? (
             <Text style={styles.monoSmall}>
               Payee: {truncateAddress(payoutAddress)}
@@ -473,9 +478,6 @@ const styles = StyleSheet.create({
   warningText: { ...typography.caption, color: colors.warning, lineHeight: 20 },
   pendingCard: { borderColor: colors.warning },
   pendingTitle: { ...typography.captionMedium, color: colors.warning, marginBottom: spacing.xs },
-  inputSpacing: {
-    marginBottom: spacing.sm,
-  },
   monoSmall: {
     ...typography.caption,
     color: colors.textMuted,
@@ -491,4 +493,3 @@ const styles = StyleSheet.create({
   },
   camera: { flex: 1 },
 });
-

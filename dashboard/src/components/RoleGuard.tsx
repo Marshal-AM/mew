@@ -35,14 +35,12 @@ export function RoleGuard({ allowed, children, loginPath }: RoleGuardProps) {
     if (!allowed.includes(session.role)) {
       if (!notifiedRef.current) {
         notifiedRef.current = true;
-        const dest = session.role === "compliance_officer" ? "/compliance" : "/merchant";
+        // Merchant dashboard accepts every role via its layout allow-list.
+        // Compliance console still rejects non-officer wallets.
         notify.warning("Wrong console for this account", {
-          description:
-            session.role === "compliance_officer"
-              ? "This wallet is a compliance officer — redirecting to the compliance console."
-              : "This wallet is a merchant — redirecting to the merchant dashboard.",
+          description: "Redirecting to the merchant dashboard.",
         });
-        router.replace(dest);
+        router.replace("/merchant");
       }
       return;
     }

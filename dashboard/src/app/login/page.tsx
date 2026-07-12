@@ -5,7 +5,6 @@ export default function LoginPage() {
     <SignInForm
       title="Merchant Login"
       description="Sign in with your wallet to manage POS products, devices, and view transaction analytics."
-      expectedRole="merchant"
       footer={<MerchantLoginFooter />}
     />
   );

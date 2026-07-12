@@ -22,27 +22,6 @@ type SignInFormProps = {
   footer?: React.ReactNode;
 };
 
-function roleGateMessage(expected: DashboardRole, actual: DashboardRole): { title: string; description: string } {
-  if (expected === "compliance_officer" && actual === "merchant") {
-    return {
-      title: "Wallet not on compliance allowlist",
-      description:
-        "Compliance login only works for wallets listed in COMPLIANCE_OFFICER_WALLETS on the Supabase merchant-auth function. Other wallets sign in as merchants — use Merchant Login instead.",
-    };
-  }
-  if (expected === "merchant" && actual === "compliance_officer") {
-    return {
-      title: "Use the compliance login page",
-      description:
-        "This wallet is configured as a compliance officer. Go to Compliance Login to access the compliance console.",
-    };
-  }
-  return {
-    title: "Wrong account type for this login",
-    description: `Expected ${expected}, but this wallet signed in as ${actual}.`,
-  };
-}
-
 export function SignInForm({
   title,
   description,
@@ -111,11 +90,6 @@ export function SignInForm({
       }
 
       const role = (authJson.role as DashboardRole | undefined) ?? "merchant";
-      if (expectedRole && role !== expectedRole) {
-        const gate = roleGateMessage(expectedRole, role);
-        notify.error(gate.title, { description: gate.description });
-        return;
-      }
 
       saveSession({
         access_token: session.access_token,
@@ -125,10 +99,13 @@ export function SignInForm({
         role,
       });
 
-      const destination = role === "compliance_officer" ? redirectCompliance : redirectMerchant;
+      // Merchant login always opens the merchant dashboard for any wallet.
+      // Compliance login still lands on the compliance console.
+      const destination =
+        expectedRole === "compliance_officer" ? redirectCompliance : redirectMerchant;
       notify.success("Signed in", {
         description:
-          role === "compliance_officer"
+          expectedRole === "compliance_officer"
             ? "Opening compliance console…"
             : "Opening merchant dashboard…",
       });
@@ -181,12 +158,12 @@ export function SignInForm({
 export function MerchantLoginFooter() {
   return (
     <>
-      Compliance officer?{" "}
+      Need the compliance console?{" "}
       <Link href="/compliance/login" className="font-medium text-primary hover:text-primary-hover">
         Sign in here
       </Link>
       <span className="block mt-2 text-subtle text-[12px]">
-        Merchant login accepts any wallet. Compliance requires an allowlisted wallet.
+        Any connected wallet can open the merchant dashboard.
       </span>
     </>
   );

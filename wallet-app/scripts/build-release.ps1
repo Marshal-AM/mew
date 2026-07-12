@@ -37,35 +37,36 @@ if ($LASTEXITCODE -ne 0) {
   throw "Could not create short-path junction at $shortRepoRoot"
 }
 
-function Invoke-Gradle([string]$workingDir, [string]$tasks) {
-  Push-Location $workingDir
-  try {
-    $env:NODE_ENV = "production"
-    $env:GRADLE_USER_HOME = $gradleShortHome
-    $env:TEMP = $tempShortHome
-    $env:TMP = $tempShortHome
-    cmd /c "gradlew.bat --no-daemon $tasks$architecturesArg"
-    if ($LASTEXITCODE -ne 0) {
-      throw "Gradle failed in ${workingDir}: $tasks"
-    }
-  } finally {
-    Pop-Location
-  }
-}
-
 try {
   $shortAndroidDir = Join-Path $shortRepoRoot "wallet-app\android"
   if (-not (Test-Path $shortAndroidDir)) {
     throw "Junction android directory not found at $shortAndroidDir"
   }
 
-  Write-Host ""
-  Write-Host "== Phase 1: JS bundle from real project path =="
-  Invoke-Gradle $androidDir ":app:createBundleReleaseJsAndAssets"
+  # Force short Gradle/temp homes. Unset Cursor sandbox GRADLE_USER_HOME if present.
+  $env:NODE_ENV = "production"
+  $env:GRADLE_USER_HOME = $gradleShortHome
+  $env:TEMP = $tempShortHome
+  $env:TMP = $tempShortHome
+  Remove-Item Env:GRADLE_OPTS -ErrorAction SilentlyContinue
 
   Write-Host ""
-  Write-Host "== Phase 2: Native release APK from short junction path =="
-  Invoke-Gradle $shortAndroidDir "assembleRelease"
+  Write-Host "== Building release APK from short junction path =="
+  Write-Host "GRADLE_USER_HOME=$env:GRADLE_USER_HOME"
+  Write-Host "Android dir=$shortAndroidDir"
+
+  Push-Location $shortAndroidDir
+  try {
+    # Single Gradle invocation so transform caches stay consistent.
+    # Metro uses realpath project root via android/app/build.gradle.
+    cmd /c "gradlew.bat --no-daemon --stop"
+    cmd /c "gradlew.bat --no-daemon clean assembleRelease$architecturesArg"
+    if ($LASTEXITCODE -ne 0) {
+      throw "Release build failed."
+    }
+  } finally {
+    Pop-Location
+  }
 
   $apkPath = Join-Path $shortAndroidDir "app\build\outputs\apk\release\app-release.apk"
   if (-not (Test-Path $apkPath)) {
